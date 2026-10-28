@@ -1,0 +1,29 @@
+[project]
+name = "local-ai-orchestrator"
+version = "0.1.0"
+description = "RTX Spark 向けローカルAI四環境の自動構築・実行制御ツール"
+requires-python = ">=3.11"
+# Windows Arm64 でも入りやすいよう、依存は最小限にする（tomllib は標準ライブラリ）
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+lao = "lao.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

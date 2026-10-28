@@ -1,0 +1,42 @@
+[environment]
+id = "e2"
+name = "画像生成"
+required_inputs = ["text", "image"]
+required_outputs = ["text", "image"]
+
+[[configurations]]
+id = "e2-standard"
+label = "標準"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "gemma-4-26B-A4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-26B-A4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0)
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 52
+mem = { weights_gb = 51, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "tool_calls", "image"]
+args = ["--jinja"]
+
+[configurations.components.imagegen]
+role = "image_gen"
+engine = "comfyui"
+model = "Qwen-Image / Qwen-Image-Edit"
+source = { hub = "huggingface", repo = "Comfy-Org/Qwen-Image_ComfyUI", files = [], revision = "", sha256 = {} }   # TODO(P0): ファイル一覧
+format = "safetensors"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16" }
+license = "Apache-2.0"
+size_gb = 60
+mem = { weights_gb = 40, overhead_gb = 8 }
+capabilities = ["image_generate", "image_edit"]
+workflow = "workflows/e2-generate.json"
+edit_workflow = "workflows/e2-edit.json"
+bindings = { prompt = "", negative = "", seed = "", width = "", height = "", image = "" }   # TODO(P0): ComfyUI から書き出した JSON のノード番号.入力名
