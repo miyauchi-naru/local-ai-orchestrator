@@ -132,7 +132,7 @@ TOOLS = {t.name: t for t in ALL_TOOLS}
 def tools_for(conf: Configuration) -> list[Tool]:
     caps = conf.capabilities()
     has_perceiver = any(c.role == "perceive" for c in conf.components.values()) or bool(
-        {"image", "audio", "video_frames"} & set(conf.chat.capabilities)
+        {"image", "audio", "video_frames", "video_audio"} & set(conf.chat.capabilities)
     )
     out = []
     for t in ALL_TOOLS:

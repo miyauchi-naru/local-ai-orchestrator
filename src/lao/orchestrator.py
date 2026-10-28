@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator
 from .backends.comfyui import apply_bindings, unbound_keys
 from .jobs import JobContext, JobManager
 from .library import Library
-from .media import Media, audio_part, image_part, segment_message
+from .media import Media, audio_part, image_part, segment_message, video_part
 from .memory import kv_cache_gb
 from .runtime import NotAdmitted, Runtime
 from .tools import ToolError, tools_for, validate
@@ -159,9 +159,11 @@ class Orchestrator:
         raise ToolError(f"この構成に {role} の部品がありません")
 
     def _perceiver_key(self, kind: str) -> str:
-        need = {"image": "image", "audio": "audio", "video": "video_frames"}[kind]
-        for c in self.rt.conf.components.values():
-            if c.role in ("perceive", "chat") and need in c.capabilities:
+        need = {"image": {"image"}, "audio": {"audio"}, "video": {"video_audio", "video_frames"}}[kind]
+        comps = [c for c in self.rt.conf.components.values() if c.role in ("perceive", "chat")]
+        # 動画は音声トラックまで聞けるモデルを優先する
+        for c in sorted(comps, key=lambda c: "video_audio" not in c.capabilities):
+            if need & set(c.capabilities):
                 return c.key
         raise ToolError(f"この構成は {kind} を理解できません")
 
@@ -185,6 +187,11 @@ class Orchestrator:
                     wav = self.media.to_wav(src, tmp / "a.wav", args.get("start_seconds", 0.0), args.get("end_seconds"))
                     msgs = [[{"role": "user", "content": [{"type": "text", "text": q}, audio_part(wav)]}]]
                     labels = [""]
+                elif "video_audio" in self.rt.conf.components[key].capabilities:
+                    # 映像と音声を一緒に聞けるモデルには、区間を切り出した動画をそのまま渡す
+                    clip = self.media.trim(src, tmp / "clip.mp4", args.get("start_seconds", 0.0), args.get("end_seconds"))
+                    msgs = [[{"role": "user", "content": [{"type": "text", "text": q}, video_part(clip)]}]]
+                    labels = [""]
                 else:
                     segs = self.media.split_video(src, tmp, start=args.get("start_seconds", 0.0),
                                                   end=args.get("end_seconds"))
@@ -201,7 +208,7 @@ class Orchestrator:
                     ctx.set_progress((i + 1) / len(msgs), f"{i + 1}/{len(msgs)} 区間")
                 ctx.set_state("saving")
                 note = "\n\n".join(answers)
-                if art.kind == "video":
+                if art.kind == "video" and labels != [""]:
                     note = ("（方式：フレーム抽出＋区間音声。フレーム間の短い出来事は見落とす可能性があります）\n\n" + note)
                 saved = self.library.add_text(
                     note, env_id=self.rt.env.id, configuration=self.rt.conf.id, title=f"{art.title} の理解結果",

@@ -138,3 +138,12 @@ def test_helpers():
     assert video_frames(5, 24) == 121
     chunks = split_text("あ。" * 300, 200)
     assert all(len(c) <= 200 for c in chunks) and "".join(chunks) == "あ。" * 300
+
+
+async def test_e1_native_video_audio_model_gets_whole_clip(tmp_path, machine, catalog, catalog_dir, sample_video):
+    rt, lib, orch = make(tmp_path, machine, catalog, catalog_dir, "e1", "e1-lfm3-omni")
+    v = lib.add_file(sample_video, env_id="e1", configuration="x")
+    ev = await run(orch, "何が聞こえる？", [v.ref])
+    refs = [r for e in ev if e.type == "artifacts" for r in e.data["refs"]]
+    note = lib.path(lib.get(refs[0])).read_text(encoding="utf-8")
+    assert "input_video" in note and "見落とす可能性" not in note

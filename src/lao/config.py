@@ -79,7 +79,7 @@ _INPUT_CAPS = {
     "text": {"text"},
     "image": {"image"},
     "audio": {"audio"},
-    "video": {"video_frames"},
+    "video": {"video_frames", "video_audio"},
 }
 _OUTPUT_CAPS = {
     "text": {"text"},

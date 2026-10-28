@@ -1,7 +1,7 @@
 """メディアの検査と分割（企画書 3.2 節）。
 
-llama.cpp の動画入力は映像フレームのみで音声トラックを扱わない（2026年6月時点）。
-そこで ffmpeg で動画を時間区間に分け、区間ごとに「フレーム列＋同じ区間の音声」を作り、
+llama.cpp の動画入力（input_video）で音声トラックまで聞けるのは一部のモデル（LFM3-Omni）だけ
+（2026年10月時点）。それ以外のモデルでは ffmpeg で動画を時間区間に分け、区間ごとに「フレーム列＋同じ区間の音声」を作り、
 画像と音声の両方を受けられるモデルへ一つのプロンプトで渡す。
 """
 
@@ -124,6 +124,11 @@ class Media:
         self._run(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(out)])
         return out
 
+    def trim(self, path: Path, out: Path, start: float = 0.0, end: float | None = None) -> Path:
+        args = ["-ss", f"{start:.3f}"] + (["-to", f"{end:.3f}"] if end is not None else [])
+        self._run(args + ["-i", str(path), "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(out)])
+        return out
+
     def concat_audio(self, parts: list[Path], out: Path) -> Path:
         lst = out.with_suffix(".txt")
         lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")
@@ -146,6 +151,11 @@ def image_part(path: Path) -> dict:
 def audio_part(path: Path) -> dict:
     fmt = "mp3" if path.suffix.lower() == ".mp3" else "wav"
     return {"type": "input_audio", "input_audio": {"data": base64.b64encode(path.read_bytes()).decode(), "format": fmt}}
+
+
+def video_part(path: Path) -> dict:
+    """llama-server の input_video（音声トラックも聞けるモデルではサウンドトラックも渡る）。"""
+    return {"type": "input_video", "input_video": {"data": base64.b64encode(path.read_bytes()).decode()}}
 
 
 def segment_message(seg: Segment, question: str) -> dict:

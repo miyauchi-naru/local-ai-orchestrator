@@ -63,3 +63,25 @@ mem = { weights_gb = 61, overhead_gb = 4 }
 context = { max = 65536, default = 32768 }
 capabilities = ["text", "tool_calls", "image", "audio", "video_frames"]
 args = ["--jinja"]
+
+# 映像と音声トラックを一緒に聞ける単一モデル（llama.cpp の input_video が LFM3-Omni のサウンドトラックに対応）
+[[configurations]]
+id = "e1-lfm3-omni"
+label = "単一（映像＋音声をそのまま理解）"
+status = "candidate"
+chat_component = "omni"
+
+[configurations.components.omni]
+role = "chat"
+engine = "llama"
+model = "LFM3-Omni"
+source = { hub = "huggingface", repo = "", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0): 配布元・サイズ・ライセンスを確認
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "TODO(P0)"
+size_gb = 20
+mem = { weights_gb = 18, overhead_gb = 6 }
+context = { max = 32768, default = 32768 }
+capabilities = ["text", "tool_calls", "image", "audio", "video_audio"]
+args = ["--jinja"]
