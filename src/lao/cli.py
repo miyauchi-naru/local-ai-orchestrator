@@ -43,6 +43,10 @@ def cmd_doctor(args) -> int:
             mark = "OK" if not problems else "NG"
             ok &= not problems
             print(f"[{mark}] {env.id}/{c.id}（{c.status}）{'：' + '、'.join(problems) if problems else ''}")
+            resident = sum(x.resident_gb for x in c.components.values()) * machine.safety_factor
+            if resident > machine.budget_gb:
+                print(f"      注意：全部品の常駐 {resident:.0f}GB が予算 {machine.budget_gb:.0f}GB を超えるため、"
+                      "対話と生成の間でロードし直しが起きます")
     info = system_info(machine)
     for good, msg in checks(info, machine):
         ok &= good

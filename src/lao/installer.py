@@ -101,7 +101,11 @@ def build_plan(machine: MachineConfig, conf: Configuration, client: httpx.Client
         if not repo or not specs:
             plan.todo.append(f"{comp.key}: 取得するリポジトリとファイルが未設定（catalog の source）")
             continue
-        r = client.get(f"{HF}/api/models/{repo}/tree/{rev}", params={"recursive": "true"})
+        try:
+            r = client.get(f"{HF}/api/models/{repo}/tree/{rev}", params={"recursive": "true"})
+        except httpx.HTTPError as e:
+            plan.todo.append(f"{comp.key}: Hugging Face に接続できません（{e}）")
+            continue
         if r.status_code == 401 or r.status_code == 403:
             plan.todo.append(f"{comp.key}: {repo} は利用条件への同意かログイン（HF_TOKEN）が必要です")
             continue
