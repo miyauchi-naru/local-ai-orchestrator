@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+/work/
+/config/machine.toml
+/p0-results/
