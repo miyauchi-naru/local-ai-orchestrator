@@ -46,12 +46,14 @@ class Runtime:
         engine_factory,
         governor: MemoryGovernor | None = None,
         lock: InferenceLock | None = None,
+        probe=None,
     ):
         problems = missing_capabilities(env, conf) + check_policy(machine, conf)
         self.limited = problems  # 空でなければ「機能限定」。完成扱いにしない（R12）
         self.machine, self.env, self.conf = machine, env, conf
         self.governor = governor or MemoryGovernor(
-            machine.budget_gb, machine.safety_factor, float(machine["memory"].get("min_free_system_gb", 8))
+            machine.budget_gb, machine.safety_factor, float(machine["memory"].get("min_free_system_gb", 8)),
+            **({"probe": probe} if probe else {}),
         )
         self.lock = lock or InferenceLock()
         self._factory = engine_factory
