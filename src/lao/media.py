@@ -129,6 +129,19 @@ class Media:
         self._run(args + ["-i", str(path), "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(out)])
         return out
 
+    def thumbnail(self, path: Path, out: Path, size: int = 256, tiles: int = 4) -> Path:
+        """長辺 size の縮小 JPEG を作る。動画は等間隔の tiles コマを横に並べた 1 枚にする。"""
+        scale = f"scale='if(gt(iw,ih),{size},-2)':'if(gt(iw,ih),-2,{size})'"
+        info = self.probe(path)
+        if not info.has_video:
+            raise MediaError(f"{path.name} に映像がありません")
+        if info.duration > 0.5 and path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+            vf = f"fps={tiles / info.duration:.6f},{scale},tile={tiles}x1"
+        else:
+            vf = scale
+        self._run(["-i", str(path), "-vf", vf, "-frames:v", "1", "-q:v", "5", str(out)])
+        return out
+
     def concat_audio(self, parts: list[Path], out: Path) -> Path:
         lst = out.with_suffix(".txt")
         lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")

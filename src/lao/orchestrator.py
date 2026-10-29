@@ -327,9 +327,9 @@ class Orchestrator:
             resp = await eng.chat(prompt, max_tokens=1024)
         return resp["choices"][0]["message"].get("content") or ""
 
-    async def complete(self, messages: list[dict], max_tokens: int = 1024) -> str:
-        """成果物（画面の中のアプリ）から呼ばれる問い合わせ。道具・記憶・ファイルは使わせない。"""
-        prompt = [{"role": "system", "content": ARTIFACT_SYSTEM}] + messages
+    async def complete(self, messages: list[dict], max_tokens: int = 1024, system: str = ARTIFACT_SYSTEM) -> str:
+        """成果物（画面の中のアプリ）や別の PC から呼ばれる問い合わせ。道具・記憶・ファイルは使わせない。"""
+        prompt = [{"role": "system", "content": system}] + messages
         key = self.rt.conf.chat_component
         async with self.rt.use([key], f"chat:{key}") as (eng,):
             resp = await eng.chat(prompt, max_tokens=max_tokens)

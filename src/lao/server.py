@@ -14,6 +14,7 @@ import base64
 import binascii
 import json
 import secrets
+import shutil
 import tempfile
 import time
 import uuid
@@ -28,15 +29,21 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .documents import DOC_SUFFIXES, DocumentError, extract_text
+from .jobs import TERMINAL
 from .library import Artifact
 from .orchestrator import TurnContext
 from .service import Service
+from .tools import ToolError, tools_for, validate
 
 MAX_UPLOAD_BYTES = 4 * 1024**3
 DATA_URI_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "audio/wav": ".wav",
                  "audio/x-wav": ".wav", "audio/mpeg": ".mp3", "video/mp4": ".mp4"}
 MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_WAIT_SECONDS = 600
+DELEGATE_SYSTEM = ("あなたは、別の PC で動く AI（Claude）から作業を任された下請けです。頼まれたことだけを、"
+                   "前置きや感想なしで、必要な分だけ短く返してください。素材にないことは作らず、分からなければそう書いてください。"
+                   "日本語で頼まれたら日本語で答えてください。")
 TEXT_EXTS = {".md", ".txt", ".html", ".svg", ".py", ".js", ".ts", ".css", ".json", ".csv", ".ps1", ".sh", ".sql",
              ".yaml", ".toml", ".xml"}
 
@@ -120,7 +127,9 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
 
     @app.get("/api/status", dependencies=[Depends(auth)])
     def status():
-        return service.runtime.status() if service.runtime else {"environment": None}
+        if not service.runtime:
+            return {"environment": None}
+        return {**service.runtime.status(), "tools": [t.name for t in tools_for(service.runtime.conf)]}
 
     # ------------------------------------------------------------ 成果物
     @app.post("/api/upload", dependencies=[Depends(auth)])
@@ -136,25 +145,29 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
                     if size > MAX_UPLOAD_BYTES:
                         raise HTTPException(413, "ファイルが大きすぎます")
                     f.write(chunk)
-            if suffix not in MEDIA_SUFFIXES | IMAGE_SUFFIXES | DOC_SUFFIXES:
-                raise HTTPException(400, f"{suffix or '拡張子なし'} は添付できません（画像・音声・動画・文書・PDF）")
-            title = Path(file.filename or "file").name
-            if suffix in MEDIA_SUFFIXES:
-                try:
-                    info = service.media.probe(tmp)
-                except ValueError as e:
-                    raise HTTPException(400, str(e)) from e
-                if suffix in (".webm", ".ogg", ".opus") and not info.has_video:
-                    # 録音（音声だけの webm 等）は wav にして音声として扱う
-                    tmp = service.media.to_wav(tmp, Path(d) / "voice.wav")
-                    title = Path(title).with_suffix(".wav").name
-            elif suffix in DOC_SUFFIXES:
-                try:
-                    extract_text(tmp)
-                except DocumentError as e:
-                    raise HTTPException(400, str(e)) from e
-            art = service.library.add_file(tmp, env_id=env, configuration="upload", title=title, move=True)
+            art = ingest(tmp, Path(file.filename or "file").name, env)
         return art_json(art)
+
+    def ingest(tmp: Path, title: str, env: str) -> Artifact:
+        """一時フォルダに置いたファイルを確かめて成果物に移す（添付と取り込みで共通）。"""
+        suffix = tmp.suffix.lower()
+        if suffix not in MEDIA_SUFFIXES | IMAGE_SUFFIXES | DOC_SUFFIXES:
+            raise HTTPException(400, f"{suffix or '拡張子なし'} は添付できません（画像・音声・動画・文書・PDF）")
+        if suffix in MEDIA_SUFFIXES:
+            try:
+                info = service.media.probe(tmp)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            if suffix in (".webm", ".ogg", ".opus") and not info.has_video:
+                # 録音（音声だけの webm 等）は wav にして音声として扱う
+                tmp = service.media.to_wav(tmp, tmp.with_name("voice.wav"))
+                title = Path(title).with_suffix(".wav").name
+        elif suffix in DOC_SUFFIXES:
+            try:
+                extract_text(tmp)
+            except DocumentError as e:
+                raise HTTPException(400, str(e)) from e
+        return service.library.add_file(tmp, env_id=env, configuration="upload", title=title, move=True)
 
     @app.get("/api/library", dependencies=[Depends(auth)])
     def library(kind: str | None = None, env: str | None = None):
@@ -568,7 +581,7 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     # ------------------------------------------------------------ 読み上げ（E3）
     @app.post("/api/speak", dependencies=[Depends(auth)])
     async def speak(body: dict):
-        from .tools import ToolError, validate
+        from .tools import ToolError, tools_for, validate
         orch = runtime_or_409()
         rt = service.runtime
         text = str(body.get("text", ""))[:10000]
@@ -732,12 +745,28 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         return {"jobs": [{**j.__dict__, "label": j.label} for j in service.jobs.list()[:100]]}
 
     @app.get("/api/jobs/{job_id}", dependencies=[Depends(auth)])
-    def job(job_id: str):
+    async def job(job_id: str, wait: float = 0):
+        """wait 秒まで終わるのを待ってから返す（別の PC から何度も問い合わせずに済むように）。"""
         try:
             j = service.jobs.get(job_id)
         except KeyError as e:
             raise HTTPException(404, "ジョブがありません") from e
-        return {**j.__dict__, "label": j.label}
+        if wait > 0 and j.state not in TERMINAL:
+            try:
+                await asyncio.wait_for(asyncio.shield(service.jobs.wait(job_id)), min(wait, MAX_WAIT_SECONDS))
+            except asyncio.TimeoutError:
+                pass
+        return job_json(j)
+
+    def job_json(j) -> dict:
+        out = {**j.__dict__, "label": j.label, "items": []}
+        for ref in j.result:
+            try:
+                a = service.library.get(ref)
+                out["items"].append({**art_json(a), "path": str(service.library.root / a.id / a.filename)})
+            except (KeyError, ValueError):
+                continue
+        return out
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(auth)])
     async def cancel(job_id: str):
@@ -746,6 +775,82 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         except KeyError as e:
             raise HTTPException(404, "ジョブがありません") from e
         return {"id": j.id, "state": j.state, "cancel_requested": j.cancel_requested}
+
+    # ------------------------------------------------------------ 別の PC から（lao mcp）
+    @app.post("/api/run/{name}", dependencies=[Depends(auth)])
+    async def run_tool(name: str, body: dict):
+        """画像・動画・音声の生成や、メディアの理解を、会話を通さずにジョブとして始める。"""
+        orch = runtime_or_409()
+        rt = service.runtime
+        try:
+            args = validate(name, body, rt.conf, service.library)
+        except ToolError as e:
+            raise HTTPException(400, str(e)) from e
+        j = service.jobs.submit(name, rt.env.id, rt.conf.id, args, orch._runner(name, args))
+        return job_json(j)
+
+    @app.get("/api/thumb/{ref}", dependencies=[Depends(auth)])
+    def thumb(ref: str, size: int = 256):
+        """画像・動画の縮小版（動画は数コマを並べた 1 枚）。仕上がりを少ないトークンで確かめるため。"""
+        try:
+            a = service.library.get(ref)
+            src = service.library.path(a)
+        except (KeyError, ValueError) as e:
+            raise HTTPException(404, str(e)) from e
+        if a.kind not in ("image", "video"):
+            raise HTTPException(400, f"{ref} は {a.kind} です（縮小版は画像と動画だけ）")
+        with tempfile.TemporaryDirectory() as d:
+            try:
+                out = service.media.thumbnail(src, Path(d) / "thumb.jpg", max(64, min(size, 1024)))
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            return Response(out.read_bytes(), media_type="image/jpeg")
+
+    @app.post("/api/delegate", dependencies=[Depends(auth)])
+    async def delegate(body: dict):
+        """この PC の AI に下請けを頼む（要約・下書き・翻訳・プロンプト作り）。結果の文章だけを返す。"""
+        orch = runtime_or_409()
+        task = str(body.get("task") or "").strip()
+        if not task:
+            raise HTTPException(400, "task（頼むこと）を書いてください")
+        parts = [task]
+        if body.get("text"):
+            parts.append("--- 素材 ---\n" + str(body["text"]))
+        for ref in body.get("refs") or []:
+            try:
+                a = service.library.get(str(ref))
+                p = service.library.path(a)
+                text = extract_text(p) if p.suffix.lower() in DOC_SUFFIXES else p.read_text(encoding="utf-8")
+            except (KeyError, ValueError, DocumentError, UnicodeDecodeError) as e:
+                raise HTTPException(400, f"{ref} を文章として読めません：{e}") from e
+            parts.append(f"--- 資料 {a.title}（{a.ref}） ---\n{text}")
+        content = "\n\n".join(parts)
+        max_tokens = max(64, min(int(body.get("max_tokens") or 1024), 8192))
+        # 日本語はおおむね 1 文字 1 トークン以上なので、文字数で控えめに見積もる
+        room = orch.context_limit - max_tokens - 1024
+        if len(content) > room:
+            raise HTTPException(413, f"素材が長すぎます（{len(content)} 文字、上限の目安 {room} 文字）。分けて頼んでください")
+        try:
+            text = await orch.complete([{"role": "user", "content": content}], max_tokens, system=DELEGATE_SYSTEM)
+        except Exception as e:  # noqa: BLE001 — 呼んだ側に理由を返す
+            raise HTTPException(503, f"AI に頼めませんでした：{e}") from e
+        return {"text": text, "model": service.runtime.conf.chat_component}
+
+    @app.post("/api/import", dependencies=[Depends(auth)])
+    def import_file(body: dict):
+        """受け取り箱（root/inbox）に置かれたファイルを成果物に取り込む。scp で送ったものを使うため。"""
+        name = str(body.get("name") or "")
+        inbox = (service.root / "inbox").resolve()
+        src = (inbox / name).resolve()
+        if not name or src.parent != inbox or not src.is_file():
+            raise HTTPException(404, f"受け取り箱 {inbox} に {name or '（名前なし）'} がありません")
+        env = service.runtime.env.id if service.runtime else "upload"
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d) / f"import{src.suffix.lower()}"
+            shutil.copyfile(src, tmp)
+            art = ingest(tmp, src.name, env)
+        src.unlink()
+        return art_json(art)
 
     # ------------------------------------------------------------ OpenAI 互換
     @app.get("/v1/models", dependencies=[Depends(auth)])
