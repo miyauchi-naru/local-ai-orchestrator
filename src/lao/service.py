@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
+from typing import AsyncIterator
 
-from .conversations import ConversationStore
+from .conversations import Conversation, ConversationStore, Turn, turn_messages
 from .config import Environment, MachineConfig, load_catalog, missing_capabilities, check_policy
 from .jobs import TERMINAL, JobManager
 from .library import Library
 from .lock import InferenceLock
 from .media import Media
-from .orchestrator import Orchestrator, SkillRef
+from .folders import FolderError, Folders, parse_folders
+from .orchestrator import Event, Orchestrator, SkillRef, TurnContext
 from .plugins import Command, CommandStore, PluginStore
 from .user_memory import MemoryStore
 from .projects import ProjectStore
 from .sandbox import Sandbox, SandboxConfig
+from .schedule import ScheduleError, Task, TaskStore
 from .skills import SkillStore
 from .runtime import Runtime, default_engine_factory
 
@@ -28,7 +32,7 @@ STYLES = {
     "formal": "丁寧な文体で、仕事の文書に使える形で答えてください。",
 }
 DEFAULT_SETTINGS = {"about_me": "", "style": "standard", "custom_styles": [], "max_tokens": 2048,
-                    "memory_enabled": True, "memory_sensitive": False, "effort": ""}
+                    "memory_enabled": True, "memory_sensitive": False, "effort": "", "folders": []}
 BUILTIN_COMMANDS = [
     Command("スキルを作る", "会話しながらスキル（SKILL.md）の下書きを作る",
             "これから一緒にスキル（手順書）を作ります。作りたいもの：$ARGUMENTS\n\n"
@@ -54,6 +58,8 @@ class Service:
         self.agents = CommandStore(root / "agents")  # サブエージェントの役割（名前・説明・指示）
         self.memory = MemoryStore(root / "memory.json")
         self.settings_path = root / "settings.json"
+        self.root = root
+        self.tasks = TaskStore(root / "tasks.json")
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
         self.media = Media(ff.get("binary", "ffmpeg"), ff.get("ffprobe", "ffprobe"))
@@ -115,9 +121,154 @@ class Service:
                     raise ValueError("max_tokens は 256〜32768 です")
             if k == "about_me":
                 v = str(v)[:4000]
+            if k == "folders":
+                if not isinstance(v, list) or len(v) > 20:
+                    raise ValueError("folders は 20 件までの一覧です")
+                v = [{"path": f.path, "write": f.write} for f in parse_folders(v)]
+                for f in v:
+                    if not Path(f["path"]).expanduser().is_dir():
+                        raise ValueError(f"フォルダ {f['path']} がありません")
             d[k] = v
         self.settings_path.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
         return d
+
+    def folders(self) -> Folders:
+        return Folders(parse_folders(self.settings().get("folders", [])), self.root / "trash")
+
+    def turn_context(self, c: Conversation, effort: str | None = None) -> TurnContext:
+        settings = self.settings()
+        use_memory = settings["memory_enabled"] and not c.incognito
+        folders = self.folders()
+        return TurnContext(instructions=self.instructions_for(c.project_id), skills=self.active_skills(),
+                           agents=self.active_agents(),
+                           memories=self.memory.for_prompt(c.project_id) if use_memory else [],
+                           allow_remember=use_memory,
+                           effort=str(effort or settings.get("effort") or "") or None,
+                           folders=folders if folders.folders else None, allow_schedule=not c.incognito)
+
+    async def run_turn(self, c: Conversation, reply: Turn, effort: str | None = None) -> AsyncIterator[Event]:
+        """会話の続きを作る。reply を更新しながら出来事を返す（画面と定期実行で共通）。"""
+        orch = self.orchestrator
+        tc = self.turn_context(c, effort)
+        max_tokens = int(self.settings()["max_tokens"])
+        knowledge = []
+        if c.project_id:
+            try:
+                knowledge = self.projects.get(c.project_id).knowledge
+            except KeyError:
+                pass
+        refs = [r for r in knowledge if self._exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
+        refs = list(dict.fromkeys(refs))
+        messages = c.model_messages()
+        # 長い会話は、前半を要約してから送る（Claude の自動要約に相当）
+        if len(c.turns) - c.digest_upto > 4:
+            n = await orch.measure(messages, refs, tc)
+            if n + max_tokens > orch.context_limit * 0.85:
+                upto = len(c.turns) - 3  # 直近の 2 往復と今回の発言は残す
+                c.digest = await orch.summarize(turn_messages(c.turns[c.digest_upto:upto]), c.digest)
+                c.digest_upto = upto
+                self.conversations.save(c)
+                messages = c.model_messages()
+                msg = "会話が長くなったため、前半を要約して続けます"
+                reply.progress.append(msg)
+                yield Event("progress", msg, {"summarized": upto})
+        async for ev in orch.respond(messages, refs, max_tokens=max_tokens, tc=tc):
+            if ev.type == "text":
+                reply.content += ev.text
+            elif ev.type == "thinking":
+                reply.thinking += ev.text
+            elif ev.type == "progress":
+                reply.progress.append(ev.text)
+            elif ev.type == "artifacts":
+                reply.artifacts += ev.data["refs"]
+            elif ev.type == "error":
+                reply.error = ev.text
+            elif ev.type == "memory":
+                self.memory.add(ev.text, c.project_id, source=c.id)
+            elif ev.type == "action":
+                reply.actions.append(ev.data)
+            yield ev
+
+    def apply_action(self, c: Conversation, aid: str, approve: bool) -> dict:
+        """AI が提案した操作を、利用者の判断どおりに行う（または取り下げる）。"""
+        for t in c.turns:
+            for a in t.actions:
+                if a.get("id") != aid:
+                    continue
+                if a.get("status") != "pending":
+                    raise ValueError("この操作は既に済んでいます")
+                if not approve:
+                    a["status"], a["result"] = "rejected", "やめました"
+                else:
+                    try:
+                        a["result"] = self._do_action(a, c)
+                        a["status"] = "done"
+                    except (FolderError, ScheduleError, KeyError, ValueError, OSError) as e:
+                        a["status"], a["result"] = "failed", str(e)
+                self.conversations.save(c)
+                return a
+        raise KeyError(aid)
+
+    def _do_action(self, a: dict, c: Conversation) -> str:
+        args = a["args"]
+        if a["kind"] == "schedule":
+            t = self.tasks.create(**{**args, "project_id": c.project_id})
+            return f"登録しました（次は {time.strftime('%m/%d %H:%M', time.localtime(t.next_run))}）" if t.next_run else "登録しました"
+        f = self.folders()  # 承認の時点の許可で、もう一度確かめる
+        act = args["action"]
+        if act == "write":
+            return f"書き込みました：{f.write_text(args['path'], args['content'], bool(args.get('overwrite')))}"
+        if act == "save":
+            art = self.library.get(args["ref"])
+            return f"保存しました：{f.copy_in(self.library.path(art), args['path'], bool(args.get('overwrite')))}"
+        if act == "move":
+            return f"移しました：{f.move(args['path'], args['to'])}"
+        if act == "delete":
+            return f"ごみ箱へ移しました：{f.remove(args['path'])}"
+        raise ValueError(act)
+
+    async def run_task(self, t: Task) -> str:
+        """定期実行の作業を 1 回行い、新しい会話に残す。"""
+        rt = self.runtime
+        if not rt or (rt.env.id, rt.conf.id) != (t.env_id, t.configuration):
+            return f"{t.env_id.upper()} が選ばれていないため実行しませんでした（環境は勝手に切り替えません）"
+        c = self.conversations.create(t.env_id, t.configuration, project_id=t.project_id)
+        c.title = f"⏰ {t.name}（{time.strftime('%m/%d %H:%M')}）"
+        c.turns.append(Turn("user", t.prompt))
+        reply = Turn("assistant", "")
+        try:
+            async for _ in self.run_turn(c, reply):
+                pass
+        except Exception as e:  # エンジン異常も会話に残す
+            reply.error = reply.error or f"止まりました：{e}"
+        c.turns.append(reply)
+        self.conversations.save(c)
+        t.last_conversation = c.id
+        return "エラーで止まりました" if reply.error else "実行しました"
+
+    async def scheduler(self, interval: float = 30.0) -> None:
+        import asyncio
+        while True:
+            await asyncio.sleep(interval)
+            await self.run_due()
+
+    async def run_due(self, now: float | None = None) -> list[Task]:
+        done = []
+        for t in self.tasks.due(now or time.time()):
+            status = await self.run_task(t)
+            t.last_run, t.last_status, t.unread = time.time(), status, True
+            if t.kind == "once":
+                t.enabled = False
+            self.tasks.save(t)
+            done.append(t)
+        return done
+
+    def _exists(self, ref: str) -> bool:
+        try:
+            self.library.get(ref)
+            return True
+        except (KeyError, ValueError):
+            return False
 
     def active_skills(self) -> list[SkillRef]:
         out = [SkillRef(s.name, s.description, s.body,

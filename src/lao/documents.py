@@ -10,6 +10,9 @@ TEXT_SUFFIXES = {".txt", ".md", ".csv", ".tsv", ".json", ".jsonl", ".yaml", ".ym
 OFFICE_SUFFIXES = {".docx", ".xlsx", ".pptx"}
 DOC_SUFFIXES = TEXT_SUFFIXES | OFFICE_SUFFIXES | {".pdf"}
 MAX_CHARS = 100_000
+# フォルダから読むとき、文字ではなく成果物として取り込むもの
+MEDIA_LIKE = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".wav", ".mp3", ".flac", ".m4a", ".ogg", ".mp4",
+              ".mov", ".webm", ".mkv"}
 
 
 class DocumentError(ValueError):

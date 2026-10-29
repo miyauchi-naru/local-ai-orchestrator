@@ -20,6 +20,7 @@ class Turn:
     error: str = ""
     thinking: str = ""
     command: str = ""  # 使ったスラッシュコマンド
+    actions: list[dict] = field(default_factory=list)  # AI が提案し、利用者の承認を待つ操作（フォルダへの書き込みなど）
     created_at: float = field(default_factory=time.time)
 
 
