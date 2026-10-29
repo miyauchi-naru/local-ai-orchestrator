@@ -95,6 +95,22 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
 - メイン PC → Spark：`scp ./start.png spark:D:/lao/inbox/` の後、Claude に「start.png を取り込んで動画にして」と頼む（`import_file`）
 - Spark → メイン PC：結果に出た保存場所を `scp "spark:D:/lao/library/<id>/<ファイル名>" .` で取ってくる
 
+## lao の画面をメイン PC で使う（Claude を通さずに）
+
+Spark の対話画面（Claude アプリに近い画面）は、メイン PC のブラウザからも使えます。SSH のトンネルで Spark の 127.0.0.1:8710 をメイン PC の 127.0.0.1:8710 につなぐだけで、LAN には開きません。
+
+1. Spark の `config/machine.toml` の `[server] api_key` に固定の値を入れる（空だと lao serve を起動するたびに変わる）
+2. メイン PC の `~/.ssh/config` の `Host spark` に 1 行足す：
+   ```
+     LocalForward 8710 127.0.0.1:8710
+   ```
+3. メイン PC で `ssh -N spark` を動かしたままにし、Edge で `http://127.0.0.1:8710/?key=<api_key>` を開く
+4. Edge の「アプリとしてインストール」で入れると、メイン PC のスタートメニューから開ける（127.0.0.1 なので録音や通知も使える）
+
+- 添付したファイルはメイン PC から Spark に送られ、成果物は Spark（D:\lao\library）に残ります。ダウンロードはメイン PC に保存されます
+- 画面の「PC のフォルダ」で選べるのは Spark 側のフォルダです
+- Spark の画面とメイン PC の画面、Claude Code からの依頼は、同じ lao を使うので順番に動きます
+
 ## ComfyUI の画面をメイン PC で開く
 
 ワークフローを作る・直すときは、SSH のトンネルで開きます（LAN には開きません）。
