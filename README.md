@@ -92,7 +92,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 ## 別の PC の Claude Code から使う
 
-メイン PC の Claude Code から、SSH 越しに `lao mcp` を道具として使えます。画像・動画・読み上げ音声の生成と、要約・翻訳・仕上がりの確認などの下請けをこの PC に任せ、Claude のトークンを節約します。LAN に開くのは SSH だけで、lao と ComfyUI は 127.0.0.1 のままです。準備（`scripts\enable-remote.ps1`）と使い方は [docs/remote.md](docs/remote.md) にあります。
+メイン PC の Claude Code から、SSH 越しに `lao mcp` を道具として使えます。画像・動画・読み上げ音声の生成と、要約・翻訳・仕上がりの確認などの下請けをこの PC に任せ、Claude のトークンを節約します。LAN に開くのは SSH だけで、lao と ComfyUI は 127.0.0.1 のままです。同じ SSH のトンネルで、この画面そのものをメイン PC のブラウザから使うこともできます。準備（`scripts\enable-remote.ps1`）と使い方は [docs/remote.md](docs/remote.md) にあります。
 
 ## Open WebUI などから使う
 
