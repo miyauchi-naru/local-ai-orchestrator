@@ -4,3 +4,4 @@ __pycache__/
 /work/
 /config/machine.toml
 /p0-results/
+*.egg-info/

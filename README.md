@@ -60,6 +60,16 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest                        # テスト
 ```
 
+## 画面
+
+`lao serve` を起動し、表示された `http://127.0.0.1:8710/?key=…` を Edge で開きます。Claude アプリに近い作りです。
+
+- 左：新しい会話、会話の一覧（環境ごとの印つき）、成果物ライブラリ、メモリ使用量
+- 中央：会話。作業の記録（折りたたみ）と、作った画像・音声・動画のカードが返答の中に出ます。添付はドラッグ＆ドロップか貼り付け。生成中は停止ボタンで取り消せます
+- 右：成果物の表示、版の切り替え、作った条件（モデル・プロンプト・シード）、添付と保存
+- 会話は作った環境に結び付きます。別の環境の会話を開くと、切り替えてよいか確かめます（勝手に切り替えません）
+- アプリとして入れる：Edge のアドレスバーの「アプリを使用できます」→ インストール。スタートメニューとタスクバーから独立した窓で開けます（PWA。中身はこの PC 内のサーバーで、外部には送りません）
+
 ## Open WebUI などから使う
 
 `lao serve` は OpenAI 互換の `/v1/chat/completions` を出します。既存の UI から「OpenAI 互換の接続先」として `http://127.0.0.1:8710/v1` と API キーを登録できます（Ollama 連携は無効にしてください）。環境の切り替えは本ツールの画面か `/api/environment` で行います。
@@ -81,7 +91,9 @@ src/lao/
   library.py      四環境共通の成果物フォルダ（版と由来）
   media.py        ffmpeg による検査・分割
   installer.py    モデル取得（再開・ハッシュ照合）
-  server.py       API と画面
+  server.py       API と画面の配信
+  conversations.py 会話の保存
+  web/            画面（index.html、PWA の manifest と service worker）
   backends/       llama-server、ComfyUI、TTS、ダミー
   p0/probe.py     実機の測定と設定値の提案
 ```

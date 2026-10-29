@@ -1,0 +1,14 @@
+{
+  "name": "ローカルAI",
+  "short_name": "ローカルAI",
+  "description": "RTX Spark で動くローカルAI（外部送信なし）",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f4ef",
+  "theme_color": "#f5f4ef",
+  "lang": "ja",
+  "icons": [
+    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}
