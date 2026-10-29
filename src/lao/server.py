@@ -273,15 +273,16 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             expanded, command = service.expand_command(text)
             c.turns.append(Turn("user", expanded, attachments=attachments, command=command or ""))
             if c.title == "新しい会話":
-                c.title = text.splitlines()[0][:40]
+                c.title = "音声会話" if body.get("voice") else text.splitlines()[0][:40]
         service.conversations.save(c)
         reply = Turn("assistant", "")
         effort = str(body.get("effort") or "") or None
+        voice = bool(body.get("voice"))
 
         async def stream():
             finished = False
             try:
-                async for ev in service.run_turn(c, reply, effort):
+                async for ev in service.run_turn(c, reply, effort, voice):
                     yield json.dumps({"type": ev.type, "text": ev.text, "data": ev.data}, ensure_ascii=False) + "\n"
                 finished = True
             except Exception as e:  # エンジン異常も会話に残す
