@@ -1,0 +1,119 @@
+{
+ "react.js": {
+  "package": "react",
+  "version": "18.3.1",
+  "file": "umd/react.production.min.js",
+  "license": "MIT",
+  "use": "React（window.React）",
+  "sha256": "d949f1c3687aedadcedac85261865f29b17cd273997e7f6b2bfc53b2f9d4c4dd",
+  "bytes": 10751
+ },
+ "react-dom.js": {
+  "package": "react-dom",
+  "version": "18.3.1",
+  "file": "umd/react-dom.production.min.js",
+  "license": "MIT",
+  "use": "ReactDOM（window.ReactDOM）",
+  "sha256": "35f4f974f4b2bcd44da73963347f8952e341f83909e4498227d4e26b98f66f0d",
+  "bytes": 131835
+ },
+ "prop-types.js": {
+  "package": "prop-types",
+  "version": "15.8.1",
+  "file": "prop-types.min.js",
+  "license": "MIT",
+  "use": "Recharts が使う",
+  "sha256": "e653471aba824786aee5dce1bcb5a86ed30c8518d346d2ace0460a5633a9cbdb",
+  "bytes": 1722
+ },
+ "babel.js": {
+  "package": "@babel/standalone",
+  "version": "7.26.4",
+  "file": "babel.min.js",
+  "license": "MIT",
+  "use": "JSX を画面の中で変換する",
+  "sha256": "a12872ea8da3d29b2a296c51bfac7c482e81419c755f2207a49ad9b77200f4ea",
+  "bytes": 2983904
+ },
+ "recharts.js": {
+  "package": "recharts",
+  "version": "2.15.0",
+  "file": "umd/Recharts.js",
+  "license": "MIT",
+  "use": "グラフ（window.Recharts）",
+  "sha256": "e7a4c8c21146e493d10c71cbbfeb4145fbb48a8ac2be103daac0c1029ca21516",
+  "bytes": 515080
+ },
+ "lucide-react.js": {
+  "package": "lucide-react",
+  "version": "0.460.0",
+  "file": "dist/umd/lucide-react.min.js",
+  "license": "ISC",
+  "use": "アイコン（window.LucideReact）",
+  "sha256": "aa5a38ea2b8ccd1a4cbdf414210c5c6ac0682bca128894b90e530f3bd64c8304",
+  "bytes": 512021
+ },
+ "chart.js": {
+  "package": "chart.js",
+  "version": "4.4.7",
+  "file": "dist/chart.umd.js",
+  "license": "MIT",
+  "use": "グラフ（window.Chart）",
+  "sha256": "2812cb8825fdc57469eb2f7bb055e9429244e599920511ee477e828499b632cb",
+  "bytes": 205615
+ },
+ "d3.js": {
+  "package": "d3",
+  "version": "7.9.0",
+  "file": "dist/d3.min.js",
+  "license": "ISC",
+  "use": "図・グラフ（window.d3）",
+  "sha256": "f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539",
+  "bytes": 279706
+ },
+ "mermaid.js": {
+  "package": "mermaid",
+  "version": "11.4.1",
+  "file": "dist/mermaid.min.js",
+  "license": "MIT",
+  "use": "流れ図など（window.mermaid）",
+  "sha256": "a43bc1afd446f9c4cc66ac5dd45d02e8d65e26fc5344ec0ef787f88d6ddb6f9e",
+  "bytes": 2571900
+ },
+ "tailwind.js": {
+  "package": "@tailwindcss/browser",
+  "version": "4.1.11",
+  "file": "dist/index.global.js",
+  "license": "MIT",
+  "use": "Tailwind の class を画面の中で CSS にする",
+  "sha256": "7933e213b39f3434b04eb24d219f279596a9c7d9f7833f7e3a8db3cebe7e69d3",
+  "bytes": 259295
+ },
+ "three.js": {
+  "package": "three",
+  "version": "0.159.0",
+  "file": "build/three.min.js",
+  "license": "MIT",
+  "use": "3D（window.THREE）",
+  "sha256": "7b1c5d75b28d9de15042e2b374f83566d8c7146697af8fdeb4558b0fb528a585",
+  "bytes": 668024
+ },
+ "papaparse.js": {
+  "package": "papaparse",
+  "version": "5.4.1",
+  "file": "papaparse.min.js",
+  "license": "MIT",
+  "use": "CSV（window.Papa）",
+  "sha256": "b8e870c5d2b29772f10c9fa9a693c8b896aac8540ed6701e3cc6304c683febdb",
+  "bytes": 19469
+ },
+ "lodash.js": {
+  "package": "lodash",
+  "version": "4.17.21",
+  "file": "lodash.min.js",
+  "license": "MIT",
+  "use": "便利関数（window._）",
+  "sha256": "a9705dfc47c0763380d851ab1801be6f76019f6b67e40e9b873f8b4a0603f7a9",
+  "bytes": 73015
+ }
+}

@@ -90,6 +90,18 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     def icon():
         return Response(asset("icon.svg"), media_type="image/svg+xml")
 
+    # 成果物の表示に使う部品（React・グラフ・図など）。手元に置いた決まったファイルだけを返す
+    vendor_list = json.loads(asset("vendor/manifest.json"))
+
+    @app.get("/vendor/{name}")
+    def vendor(name: str):
+        if name not in vendor_list:
+            raise HTTPException(404, "ありません")
+        data = resources.files("lao").joinpath("web", "vendor", name).read_bytes()
+        return Response(data, media_type="text/javascript", headers={
+            "Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff",
+            "Access-Control-Allow-Origin": "*"})  # 公開されている部品なので、箱の中（origin なし）からも読めるようにする
+
     # ------------------------------------------------------------ 環境
     @app.get("/api/environments", dependencies=[Depends(auth)])
     def environments():
@@ -664,6 +676,27 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             return FileResponse(service.library.path(a), media_type=a.mime)
         except (KeyError, ValueError) as e:
             raise HTTPException(404, str(e)) from e
+
+    @app.post("/api/complete", dependencies=[Depends(auth)])
+    async def complete(body: dict):
+        """成果物（画面の中のアプリ）からの問い合わせ（Claude の window.claude.complete に相当）。"""
+        orch = runtime_or_409()
+        msgs = body.get("messages")
+        if msgs is None:
+            msgs = [{"role": "user", "content": body.get("prompt", "")}]
+        if (not isinstance(msgs, list) or not 1 <= len(msgs) <= 50
+                or not all(isinstance(m, dict) and m.get("role") in ("user", "assistant")
+                           and isinstance(m.get("content"), str) for m in msgs)):
+            raise HTTPException(400, "prompt か messages（user と assistant の文字だけ）を渡してください")
+        if not msgs[-1]["content"].strip() or sum(len(m["content"]) for m in msgs) > 40000:
+            raise HTTPException(400, "問い合わせは 1〜40000 文字です")
+        msgs = [{"role": m["role"], "content": m["content"]} for m in msgs]
+        max_tokens = max(16, min(int(body.get("max_tokens") or 1024), 4096))
+        try:
+            text = await orch.complete(msgs, max_tokens)
+        except Exception as e:  # noqa: BLE001 — 画面の中のアプリに理由を返す
+            raise HTTPException(503, f"AI に問い合わせできませんでした：{e}") from e
+        return {"text": text}
 
     @app.get("/api/search", dependencies=[Depends(auth)])
     async def search_docs(q: str = "", project: str = "", limit: int = 10):

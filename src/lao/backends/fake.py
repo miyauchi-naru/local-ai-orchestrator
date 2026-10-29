@@ -63,6 +63,9 @@ class FakeLlama:
             else:
                 text = f"できませんでした：{res.get('error')}"
             return _msg(text)
+        if not tools and isinstance(last.get("content"), str):
+            # 成果物からの問い合わせ（道具なし）
+            return _msg(f"（ダミー応答）{last['content'][:200]}")
         if not tools:
             # 理解モデルとしての応答
             kinds = [p.get("type") for p in last.get("content", []) if isinstance(p, dict)]
@@ -107,6 +110,10 @@ class FakeLlama:
             return _call("generate_speech", {"text": user})
         if refs and "describe_media" in names:
             return _call("describe_media", {"ref": refs[-1], "question": user or "内容を説明して"})
+        if "グラフ" in user:
+            return _msg("（ダミー応答）グラフを作りました。\n\n```jsx\n" + DEMO_JSX + "\n```")
+        if "流れ図" in user:
+            return _msg("（ダミー応答）流れ図です。\n\n```mermaid\n" + DEMO_MERMAID + "\n```")
         if "コード" in user:
             return _msg(f"（ダミー応答）{user[:200]}\n\n```html\n" + DEMO_HTML + "\n```")
         return _msg(f"（ダミー応答）{user[:200]}")
@@ -129,6 +136,35 @@ DEMO_HTML = """<!doctype html>
 <div id="t"></div>
 <script>setInterval(() => document.getElementById("t").textContent = new Date().toLocaleTimeString(), 500);</script>
 </body></html>"""
+
+
+DEMO_JSX = """import { useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
+import { Sparkles } from "lucide-react";
+
+const data = [{ name: "1月", v: 12 }, { name: "2月", v: 19 }, { name: "3月", v: 7 }];
+
+export default function App() {
+  const [answer, setAnswer] = useState("");
+  return (
+    <div className="p-6 font-sans">
+      <h1 className="text-2xl font-bold mb-4">月ごとの件数</h1>
+      <BarChart width={360} height={200} data={data}>
+        <XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="v" fill="#c96442" />
+      </BarChart>
+      <button id="ask" className="mt-4 px-3 py-2 rounded bg-orange-700 text-white flex items-center gap-2"
+        onClick={async () => setAnswer(await window.claude.complete("この数字を一言で"))}>
+        <Sparkles size={16} /> AI に聞く
+      </button>
+      <p id="answer" className="mt-2">{answer}</p>
+    </div>
+  );
+}"""
+
+DEMO_MERMAID = """flowchart LR
+  A[依頼] --> B{環境は合う?}
+  B -- はい --> C[実行]
+  B -- いいえ --> D[別の環境を案内]"""
 
 
 def _text(m: dict) -> str:
