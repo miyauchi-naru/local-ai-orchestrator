@@ -23,6 +23,7 @@
 param(
   [switch]$Execute,
   [string]$PublicKeyFile = "",
+  [string]$PublicKey = "",        # 公開鍵の 1 行をそのまま渡すとき（-PublicKeyFile の代わり）
   [string]$Root = "C:\lao",       # lao の Python 環境がある場所
   [string]$DataRoot = "D:\lao",   # machine.toml の paths.root（受け取り箱を置く）
   [switch]$AutostartServe
@@ -42,11 +43,16 @@ function Step([string]$Title, [scriptblock]$Action) {
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
   [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) { Write-Warning "管理者の PowerShell で実行してください"; if ($Execute) { exit 1 } }
-if (-not $PublicKeyFile -or -not (Test-Path $PublicKeyFile)) {
-  Write-Warning "メイン PC の公開鍵（例：id_ed25519.pub）を -PublicKeyFile で指定してください"
+$Key = ""
+if ($PublicKey) {
+  $Key = $PublicKey.Trim()
+} elseif ($PublicKeyFile -and (Test-Path $PublicKeyFile)) {
+  $Key = (Get-Content $PublicKeyFile -Raw).Trim()
+}
+if (-not $Key) {
+  Write-Warning "メイン PC の公開鍵を -PublicKeyFile（例：id_ed25519.pub）か -PublicKey（1 行）で指定してください"
   if ($Execute) { exit 1 }
 } else {
-  $Key = (Get-Content $PublicKeyFile -Raw).Trim()
   if ($Key -notmatch '^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) ') { throw "公開鍵の形式ではありません：$PublicKeyFile" }
   if ($Key -match 'PRIVATE KEY') { throw "秘密鍵が指定されています。.pub の方を渡してください" }
 }

@@ -18,7 +18,11 @@ param(
   [string]$LlamaCppRef = "master",          # TODO(P0): 動作確認した版（タグ）に固定する
   [string]$ComfyUIRef = "master",           # TODO(P0): 動作確認した版に固定する
   [string]$TorchSpec = 'torch==2.14.0+cu134 torchvision==0.29.0+cu134 torchaudio==2.11.0+cu134',
-  [string]$TorchIndex = 'https://pypi.nvidia.com/nvtorch_oot/'
+  [string]$TorchIndex = 'https://pypi.nvidia.com/nvtorch_oot/',
+  # CUDA Toolkit 13.4（Windows Arm64）のインストーラー。指定すると無人で入れる（-s）。
+  # TODO(P0): NVIDIA 開発者サイトの配布 URL と SHA256 を確かめ、ここで取得できるようにする
+  [string]$CudaInstaller = "",
+  [switch]$SkipLlamaCpp                     # llama.cpp のビルドを飛ばす（WSL2 案を試すときなど）
 )
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -27,6 +31,11 @@ function Step([string]$Title, [scriptblock]$Action) {
   Write-Host "== $Title" -ForegroundColor Cyan
   if ($Execute) { & $Action } else { Write-Host "   （確認のみ）$($Action.ToString().Trim())" }
 }
+# winget で入れたものを、開き直さずにこの PowerShell から使えるようにする
+function Update-PathFromRegistry {
+  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+}
+function Test-Cuda { return [bool]($env:CUDA_PATH -or (Get-Command nvcc -ErrorAction SilentlyContinue)) }
 
 # --- 前提の確認（常に実行。何も変更しない） ---
 $arch = $env:PROCESSOR_ARCHITECTURE
@@ -60,30 +69,47 @@ Step "ffmpeg を入れる" {
 Step "Git と CMake、Visual Studio Build Tools（C++、Arm64）を入れる" {
   winget install --id Git.Git --accept-package-agreements --accept-source-agreements
   winget install --id Kitware.CMake --accept-package-agreements --accept-source-agreements
-  winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --includeRecommended"
+  winget install --id Microsoft.VisualStudio.2022.BuildTools --accept-package-agreements --accept-source-agreements --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --includeRecommended"
+  Update-PathFromRegistry
 }
-Write-Host "注意：CUDA Toolkit 13.4（Windows Arm64、プレビュー）は NVIDIA 開発者サイトから手動で入れてください（ドライバ・CUDA の導入は別承認）" -ForegroundColor Yellow
+# CUDA Toolkit は Build Tools の後に入れる（VS との連携が入るように）。llama.cpp のビルドより前に要る
+if (Test-Cuda) {
+  Write-Host "CUDA Toolkit: あり（$env:CUDA_PATH）"
+} elseif ($CudaInstaller) {
+  Step "CUDA Toolkit を入れる（$CudaInstaller、無人）" {
+    Start-Process -FilePath $CudaInstaller -ArgumentList "-s" -Wait
+    $env:CUDA_PATH = [Environment]::GetEnvironmentVariable("CUDA_PATH", "Machine")
+  }
+} else {
+  Write-Warning "CUDA Toolkit 13.4（Windows Arm64）がありません。NVIDIA 開発者サイトのインストーラーを -CudaInstaller で渡すか、先に入れてください（ドライバは更新しない）"
+}
 
 Step "本ツール（lao）を入れる" {
-  py -3.12 -m venv "$Root\venv"
+  Update-PathFromRegistry
+  if (-not (Test-Path "$Root\venv\Scripts\python.exe")) { py -3.12 -m venv "$Root\venv" }
   & "$Root\venv\Scripts\python.exe" -m pip install --upgrade pip
   & "$Root\venv\Scripts\python.exe" -m pip install -e $Repo
 }
 
+if ($SkipLlamaCpp) { Write-Host "llama.cpp のビルドは飛ばします（-SkipLlamaCpp）" } else {
 Step "llama.cpp を CUDA でビルドする" {
   # TODO(P0): Windows Arm64 + CUDA でビルドできるか確認。できなければ WSL2 案（install-wsl2.sh）か Vulkan を試す
-  git clone https://github.com/ggml-org/llama.cpp "$Root\engines\llama.cpp-src"
+  # ここで止めずに ComfyUI・PyTorch へ進む（GPU の確保上限は PyTorch で測れるため）
+  if (-not (Test-Cuda)) { Write-Warning "CUDA Toolkit が無いため llama.cpp をビルドしません。CUDA を入れてから、もう一度このスクリプトを実行してください（済んだ手順は飛ばします）"; return }
+  if (-not (Test-Path "$Root\engines\llama.cpp-src\.git")) { git clone https://github.com/ggml-org/llama.cpp "$Root\engines\llama.cpp-src" }
   git -C "$Root\engines\llama.cpp-src" checkout $LlamaCppRef
   cmake -S "$Root\engines\llama.cpp-src" -B "$Root\engines\llama.cpp-src\build" -DGGML_CUDA=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
   cmake --build "$Root\engines\llama.cpp-src\build" --config Release --target llama-server llama-bench -j
   New-Item -ItemType Directory -Force -Path "$Root\engines\llama.cpp" | Out-Null
   Copy-Item "$Root\engines\llama.cpp-src\build\bin\Release\*" "$Root\engines\llama.cpp\" -Recurse -Force
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$Root\engines\llama.cpp\llama-server.exe")) { Write-Warning "llama-server.exe ができませんでした。上の表示を記録し、WSL2 案を試します（docs/arrival.md）" }
+}
 }
 
 Step "ComfyUI と PyTorch（CUDA、Windows Arm64）を入れる" {
-  git clone https://github.com/comfyanonymous/ComfyUI "$Root\engines\comfyui"
+  if (-not (Test-Path "$Root\engines\comfyui\.git")) { git clone https://github.com/comfyanonymous/ComfyUI "$Root\engines\comfyui" }
   git -C "$Root\engines\comfyui" checkout $ComfyUIRef
-  py -3.12 -m venv "$Root\engines\comfyui\.venv"
+  if (-not (Test-Path "$Root\engines\comfyui\.venv\Scripts\python.exe")) { py -3.12 -m venv "$Root\engines\comfyui\.venv" }
   $py = "$Root\engines\comfyui\.venv\Scripts\python.exe"
   & $py -m pip install --upgrade pip
   & $py -m pip install $TorchSpec.Split(' ') --extra-index-url $TorchIndex
@@ -91,8 +117,10 @@ Step "ComfyUI と PyTorch（CUDA、Windows Arm64）を入れる" {
   & $py -m pip install -r "$Root\engines\comfyui\requirements.txt"
 }
 
-Step "設定ファイルを作る" {
+Step "設定ファイルを作り、ffmpeg・llama-server の場所と固定の API キーを埋める" {
   if (-not (Test-Path "$Repo\config\machine.toml")) { Copy-Item "$Repo\config\machine.example.toml" "$Repo\config\machine.toml" }
+  Update-PathFromRegistry
+  & "$Root\venv\Scripts\lao.exe" configure --auto
 }
 
 Write-Host ""

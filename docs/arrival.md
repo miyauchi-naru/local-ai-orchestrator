@@ -1,193 +1,180 @@
 # 実機が届いたら（RTX Spark 到着後の手順書）
 
-RTX Spark 128GB（Windows 11 on Arm、ノート型）が届いてから、メイン PC の Claude Code で使えるようになるまでを、上から順に並べた手順書です。
-細かい説明は各文書にあり、ここではつなぎ方と順番、確かめる点だけを書きます。
+RTX Spark 128GB（Windows 11 on Arm、ノート型）が届いてから、蓋を閉じたままメイン PC の Claude Code で使えるようになるまでの手順です。
 
-- **利用者の「開始」指示があるまで、どの手順も実行しません。**
+- **手作業は最小限にします。** 利用者が行うのは、Windows の初期設定と、Spark に Claude Code を入れて Remote Control でつなぐところまでです。残りは Spark 上の Claude が `scripts\setup-spark.ps1` で流し、判断が要るところだけ利用者に聞きます。
+- **利用者の「開始」指示があるまで、どの手順も実行しません。**（メイン PC の準備も同じです）
 - 置き場所：C（1TB）にモデル・エンジン・Python 環境、D（2TB）に成果物・会話・ジョブ・ログ（[prep.md](prep.md) 1.2 節）
-- 「Spark」と書いたものは届いた PC、「メイン PC」はいつも使っている PC です。
-- 時間の目安：1〜6 章で 1〜2 日（ビルドとモデル取得の待ちが大半）、P0 の詳しい評価は 2 週ほど（[prep.md](prep.md) 5 章）
+- 「Spark」は届いた PC、「メイン PC」はいつも使っている PC です。
 
 ## 全体の流れ
 
-| 章 | すること | 終わった印 |
-|---|---|---|
-| 0 | 届く前の用意（メイン PC 側） | 鍵と Hugging Face の準備ができている |
-| 1 | 開封と Windows の初期設定 | 128GB・C/D・ドライバの版を記録した |
-| 2 | 画面を閉じても動き続ける設定 | 蓋を閉じたままメイン PC から SSH が通る（6 章で確認） |
-| 3 | lao の導入 | `lao doctor` が通る |
-| 4 | P0 の測定と設定値 | `config/machine.toml` に測定値が入った |
-| 5 | Spark 上で起動の確認 | Spark の Edge で対話画面が開く |
-| 6 | メイン PC から使う | Claude Code から lao の道具が呼べる。ブラウザで画面が開く |
-| 7 | 必要なときだけ（意味検索・コード実行） | — |
+| 章 | いつ | 誰が | すること |
+|---|---|---|---|
+| 0 | 届く前 | 利用者／Claude | アカウントと素材の用意。メイン PC の鍵の用意（「開始」の後） |
+| 1 | 届いた日 | 利用者 | Windows の初期設定、Claude Code の導入、Remote Control でつなぐ（30〜60 分） |
+| 2 | 届いた日 | Spark の Claude | 電源・蓋の設定、導入、SSH、点検を一度に流す（ビルドの待ちで数時間） |
+| 3 | 1〜2 週 | Spark の Claude（判断は利用者） | モデルの取得と測定、画像・動画・音声の準備、評価 |
+| 4 | 2 の後 | メイン PC の Claude | メイン PC から Spark につなぎ、蓋を閉じて確かめる |
 
-## 0 届く前の用意（メイン PC 側）
+## 0 届く前に済ませておくこと
 
-- [ ] メイン PC に SSH の鍵があるか確かめる。無ければ `ssh-keygen -t ed25519`。公開鍵 `~/.ssh/id_ed25519.pub` を USB メモリに入れておく（秘密鍵は入れない）
-- [ ] Hugging Face のアカウントと、利用条件への同意が要るモデル（Gemma 4 など）の同意。読み取り用のアクセストークンを作っておく
-- [ ] 評価用の素材（自分の声の録音、非発話音を含む短い動画など。[prep.md](prep.md) 4 章）
-- [ ] できれば有線 LAN（USB-C の LAN アダプタ）。画面を閉じて長く使うなら Wi-Fi より安定します
+### 0.1 利用者が行うこと
 
-## 1 開封と Windows の初期設定
+- [ ] Hugging Face のアカウントを作り、利用条件への同意が要るモデル（Gemma 4 など）の同意を済ませる。**読み取り用のアクセストークン**を作っておく（1 章で Spark に入れる。会話には貼らない）
+- [ ] 評価用の素材を集める（自分の声の録音、非発話音を含む短い動画など。[prep.md](prep.md) 4 章）。他人の声や顔を使うなら本人の同意を得る
+- [ ] できれば USB-C の有線 LAN アダプタ。蓋を閉じて長く使うなら Wi-Fi より安定します
+- [ ] Spark の利用者名を決めておく（**半角英数字、空白なし**。例：`naru`）
 
-1. **AC 電源につないで**初期設定を進める。
-2. **利用者名は半角英数字、空白なし**にする（例：`naru`）。SSH の `User`、パス、ビルドで日本語や空白が問題を起こすため。Microsoft アカウントでも、作られるフォルダ名（`C:\Users\<名前>`）を確かめておく。
-3. Windows Update をすべて済ませ、再起動する。
-4. 記録する（P0 の結果と一緒に残す）：
-   - 機種、メモリ（設定 → システム → バージョン情報で 128GB）、Windows の版
-   - `nvidia-smi` の GPU 名とドライバの版
-   - タスクマネージャー → パフォーマンス → GPU の「共有 GPU メモリ」の上限
-5. ドライブを確かめる：PowerShell で `Get-PSDrive C,D`。C が約 1TB、D が約 2TB あること。D が見えなければ「ディスクの管理」で NTFS に初期化して D を割り当てる。
-6. BitLocker（デバイスの暗号化）が有効なら、回復キーを Microsoft アカウントか紙に保存しておく。
-7. ネットワークを「プライベート」にする（設定 → ネットワークとインターネット → 使っている接続 → ネットワーク プロファイルの種類）。パブリックのままだと 6 章の SSH が通りません。
-8. ルーターで Spark の IP を固定（DHCP の予約）しておくと、メイン PC の設定が変わらずに済みます。PC 名（`$env:COMPUTERNAME`）で届く家庭なら不要です。
+### 0.2 メイン PC の準備（「開始」の後なら、届く前に済ませてよい）
 
-## 2 画面を閉じても動き続ける設定
-
-Spark は蓋を閉じて置いたまま、メイン PC から使う前提です。**AC 電源のときだけ**眠らないようにし、バッテリーのときは普通に眠るようにします。
-
-### 2.1 蓋を閉じても何もしない・眠らない
-
-管理者の PowerShell で：
+メイン PC（Windows）の Claude Code か利用者が、リポジトリの `scripts\prepare-main-pc.ps1` を流します。
 
 ```powershell
-# AC 電源のとき：蓋を閉じても何もしない（0 = 何もしない）
-powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
-# AC 電源のとき：スリープ・休止状態にしない（画面だけは消してよい）
-powercfg /change standby-timeout-ac 0
-powercfg /change hibernate-timeout-ac 0
-powercfg /change monitor-timeout-ac 5
-powercfg /setactive SCHEME_CURRENT
-# 確かめる：LIDACTION の「現在の AC 電源設定のインデックス」が 0x00000000 なら OK
-powercfg /query SCHEME_CURRENT SUB_BUTTONS LIDACTION
+powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -AddClaudeMd            # 確認のみ
+powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -AddClaudeMd -Execute   # 実行
 ```
 
-画面からも同じことができます：コントロール パネル → 電源オプション → 「カバーを閉じたときの動作の選択」→「電源に接続」を「何もしない」。設定 → システム → 電源とバッテリーで、「電源に接続時」のスリープを「なし」、電源モードを「最適なパフォーマンス」にします。
+- SSH の鍵が無ければ作り、**公開鍵の 1 行**を表示します（クリップボードにも入ります）。公開鍵は秘密ではないので、このプロジェクトの会話に貼ってください。2 章で Spark の Claude が使います。
+- Claude Code の MCP の待ち時間を 15 分に延ばし（動画の生成を待てるように）、`~/.claude/CLAUDE.md` に lao の使い方を足します。
 
-### 2.2 ネットワークを切らさない
+### 0.3 リポジトリで済ませたこと
 
-- 有線 LAN がいちばん確実です。Wi-Fi の場合は、デバイス マネージャー → ネットワーク アダプター → Wi-Fi のプロパティ →「電源の管理」で「電力の節約のために、コンピューターでこのデバイスの電源をオフにできるようにする」を外します（項目が無い機種もあります）。
-- 2.1 でスリープしないようにしていれば、蓋を閉じても Wi-Fi はつながったままです。
+- 到着後の作業を一度に流すスクリプト（`scripts\setup-spark.ps1`）と、メイン PC 側のスクリプト（`scripts\prepare-main-pc.ps1`）。どちらも既定は確認のみで、済んだ手順は飛ばすので、途中で止まっても同じコマンドで続きから進みます。
+- 設定ファイルの自動記入（`lao configure`）。ffmpeg と llama-server の場所、固定の API キー、P0 の測定値をコメントを残したまま書き込みます。
+- 導入の順番の修正：CUDA Toolkit が無いまま llama.cpp をビルドしないようにしました（Build Tools → CUDA → llama.cpp の順）。
+- カタログの配布元を公開情報で確かめました（2026-10-29）。結果は 3.1 節にあります。
 
-### 2.3 勝手に再起動されて止まらないように
+## 1 届いた日に利用者が行うこと
 
-- 設定 → Windows Update →「アクティブ時間」を使う時間帯に合わせる。長い生成をする前は「更新の一時停止」を使う。
-- 再起動の後は、**一度 Spark にサインインするまで lao serve が起動しません**（6 章の `-AutostartServe` はサインイン時に起動するため）。再起動されたら蓋を開けてサインインしてください。
-
-### 2.4 熱について
-
-- 蓋を閉じると放熱が落ちる機種があります。机など硬く平らな所に置き、吸気口・排気口をふさがない（布団や鞄の中に置かない）。縦置きのスタンドも効果があります。
-- 4 章の 30 分以上の連続生成は、**蓋を閉じた状態でも一度**行い、速度が大きく落ちないか（熱で絞られていないか）を見ます。落ちるなら蓋を開けて使うか、置き方を変えます。
-
-確かめるのは 6 章の最後（蓋を閉じたままメイン PC から使えること）です。
-
-## 3 lao の導入
-
-1. Git を入れて、リポジトリを取得する（非公開のリポジトリなので、初回はブラウザで GitHub にサインインします）：
+1. **AC 電源につないで**初期設定を進める。利用者名は 0.1 で決めた半角英数字にする。
+2. BitLocker（デバイスの暗号化）が有効なら、回復キーを Microsoft アカウントか紙に保存する。
+3. Windows Update をすべて済ませ、再起動する（ドライバもここで入る分だけにし、別に更新しない）。
+4. 家の LAN につなぐ（有線があれば有線）。
+5. PowerShell（普通の権限）で、Git と Claude Code を入れ、Hugging Face のトークンを入れる：
    ```powershell
-   winget install --id Git.Git --accept-package-agreements --accept-source-agreements
-   # 新しい PowerShell を開いてから
+   winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+   # 新しい PowerShell を開いてから（Claude Code の公式の手順。Arm64 版の手順が別にあればそちらに従う）
+   irm https://claude.ai/install.ps1 | iex
+   # Hugging Face のトークン（この PC の利用者の環境変数に入れる。会話やファイルには書かない）
+   [Environment]::SetEnvironmentVariable("HF_TOKEN", "<0.1 で作ったトークン>", "User")
    New-Item -ItemType Directory -Force C:\lao | Out-Null
-   git clone https://github.com/miyauchi-naru/local-ai-orchestrator C:\lao\local-ai-orchestrator
+   ```
+6. Windows Terminal を**右クリック →「管理者として実行」**で開き、Claude Code にサインインしてから Remote Control でつなぐ。導入スクリプトが管理者の権限を要るためです（OpenSSH サーバー、電源設定、ファイアウォール）。
+   ```powershell
+   cd C:\lao
+   claude            # 初回のサインイン。済んだら /exit
+   claude remote-control
+   ```
+7. このプロジェクトの会話で「開始」と伝える。ここから先は Spark の Claude が進めます。
+
+**2 章の途中で利用者の手が要るところ：** リポジトリの取得の時にブラウザで GitHub にサインインする（非公開のリポジトリのため、初回だけ）、管理者の確認画面が出たら「はい」、WSL2 を試す場合の再起動の了承。
+
+## 2 Spark の Claude が行うこと（setup-spark.ps1）
+
+1. リポジトリを `C:\lao\local-ai-orchestrator` に取得する。
+2. **確認モード**で流し、表示を読む。CPU が ARM64、メモリが 128GB 前後、C が約 1TB・D が約 2TB、ネットワーク名が家の LAN であることを確かめ、違えば利用者に聞く。
+   ```powershell
    cd C:\lao\local-ai-orchestrator
+   powershell -ExecutionPolicy Bypass -File scripts\setup-spark.ps1 -PublicKey "<0.2 の公開鍵の 1 行>"
    ```
-2. **CUDA Toolkit を先に入れる。** 導入スクリプトは同じ実行の中で llama.cpp を CUDA でビルドするため、その前に必要です。
-   1. Visual Studio Build Tools（C++、Arm64）を先に入れる（CUDA の導入時に VS との連携が入るように）：
-      ```powershell
-      winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --includeRecommended"
-      ```
-   2. NVIDIA の開発者サイトから CUDA Toolkit 13.4（Windows Arm64）を入れる。ドライバは 1 章の Windows Update の版のままにし、勝手に更新しない。
-3. 導入スクリプトを**確認モード**で動かし、表示を読む：
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\install-native.ps1
-   ```
-   CPU が `ARM64`、メモリが 128GB 前後、C と D の空き容量が出ていることを確かめます。
-4. 問題なければ実行する：`... install-native.ps1 -Execute`
-   - Python 3.12（Arm64）、ffmpeg、Git・CMake・Build Tools、lao（`C:\lao\venv`）、llama.cpp（`C:\lao\engines\llama.cpp`）、ComfyUI と PyTorch（`C:\lao\engines\comfyui`）が入り、`config\machine.toml` が作られます。
-   - 途中の PyTorch の行で `True` と出れば、GPU が使えています。
-5. `lao` を短く呼べるようにする（PowerShell を開くたび。常に使うならユーザーの PATH に `C:\lao\venv\Scripts` を足す）：
-   ```powershell
-   Set-Alias lao C:\lao\venv\Scripts\lao.exe
-   ```
-6. ffmpeg の場所を設定に合わせる。winget は `C:\lao\engines\ffmpeg` ではなく別の場所に入れるので、新しい PowerShell で `(Get-Command ffmpeg).Source` と `(Get-Command ffprobe).Source` を調べ、`config\machine.toml` の `[engines.ffmpeg]` に書く（区切りは `/` でも `\\` でも可）。
-7. 点検：`lao doctor`。NG の行を直してから次へ進みます。
+3. 同じコマンドに `-Execute` を付けて実行する。記録は `D:\lao\logs\setup-<日時>.txt` に残ります。
+4. 結果（PC 名、利用者名、IP、GPU が確保できた量、`lao doctor` の NG）を会話で報告する。
 
-**llama.cpp のビルドが失敗したとき：** Windows Arm64 の CUDA ビルドは未確認の部分です（[prep.md](prep.md) 2 章）。失敗の表示を記録し、WSL2 案を試します（[plan.md](plan.md) 2.2 節）。`wsl --install` で Ubuntu（Arm64）を入れ、WSL の中で `nvidia-smi` が動くことを確かめてから `bash scripts/install-wsl2.sh`（確認のみ）→ `--execute`。WSL2 を主に使うときは `machine.toml` の `[machine] runtime = "wsl2"` にします。
+### 2.1 setup-spark.ps1 がすること
 
-## 4 P0 の測定と設定値
+| 段階 | すること |
+|---|---|
+| 記録 | PC 名・利用者名・Windows の版・メモリ・C/D の容量・ネットワーク・IP を表示する |
+| power | 下の 2.2 節（蓋を閉じても動き続ける設定） |
+| install | `scripts\install-native.ps1`：フォルダ（C:\lao、D:\lao）、Python 3.12（Arm64）、ffmpeg、Git・CMake・Build Tools、CUDA Toolkit（`-CudaInstaller` を渡したとき）、lao（`C:\lao\venv`）、llama.cpp の CUDA ビルド、ComfyUI と PyTorch（CUDA）、`config\machine.toml` の作成と自動記入 |
+| remote | `scripts\enable-remote.ps1`：OpenSSH サーバー（鍵だけ、この利用者だけ、同じ LAN のプライベートネットワークからだけ）、公開鍵の登録、受け取り箱 `D:\lao\inbox`、ログオン時に lao serve を起動するタスク（[remote.md](remote.md)） |
+| check | `lao doctor`、GPU が確保できる量の測定（モデルなし）、lao serve の起動と `lao mcp --check` |
 
-手順の意味と記録の残し方は [prep.md](prep.md) 5 章、決めることの一覧は [plan.md](plan.md) 15 章にあります。ここでは lao の操作の順番だけ書きます。
+### 2.2 蓋を閉じても動き続ける設定（power の段階）
 
-1. **GPU が確保できる量だけ先に測る**（モデルはまだ無いので省きます）：
+Spark は蓋を閉じて置いたまま、メイン PC から使う前提です。**AC 電源のときだけ**眠らないようにし、バッテリーのときは今まで通り眠ります。
+
+- 蓋を閉じたときの動作（AC）を「何もしない」、スリープと休止状態（AC）を「なし」、画面は 5 分で消す（`powercfg`）
+- 今のネットワークを「プライベート」にする（パブリックのままだと SSH が通らない。**家の LAN で実行すること**）
+- ネットワーク アダプターの「電力の節約のために電源をオフにできる」を外す（変えられない機種もある）
+- Windows Update のアクティブ時間を 8 時〜2 時にする（この間は勝手に再起動しない）
+
+スクリプトで変えられないことは次の二つです。
+
+- **再起動の後は、一度 Spark にサインインするまで lao serve が起動しません**（タスクがサインイン時に起動するため）。勝手に再起動されたら、蓋を開けてサインインしてください。長い生成の前は Windows Update の「更新の一時停止」を使うと安全です。
+- **熱：** 蓋を閉じると放熱が落ちる機種があります。硬く平らな所に置き、吸気口・排気口をふさがない（布団や鞄の中に置かない）。3 章の 30 分以上の連続生成は蓋を閉じた状態でも一度行い、速度が大きく落ちないかを見ます。
+
+### 2.3 止まったとき
+
+- **CUDA Toolkit が無い：** llama.cpp のビルドを飛ばして先へ進みます。Claude が NVIDIA の開発者サイトから CUDA Toolkit 13.4（Windows Arm64）のインストーラーを取り、`-CudaInstaller <ファイル>` を付けてもう一度流します（ドライバは更新しません）。
+- **llama.cpp のビルドが失敗した：** Windows Arm64 の CUDA ビルドは未確認の部分です（[prep.md](prep.md) 2 章）。表示を記録し、WSL2 案（[plan.md](plan.md) 2.2 節）を試すかを利用者に聞きます。了承があれば `wsl --install`（再起動あり）→ WSL の中で `nvidia-smi` を確かめ → `bash scripts/install-wsl2.sh --execute`、`lao configure --set machine.runtime=wsl2`。
+- **途中でエラー：** 原因を直して同じコマンドを流し直します。済んだ手順は飛ばします。
+
+## 3 モデルと測定（Spark の Claude が行い、決めることは利用者に聞く）
+
+[prep.md](prep.md) 5 章の P0 にあたります。決めることの一覧は [plan.md](plan.md) 15 章です。
+
+1. **カタログを確かめる：** `git grep -n "TODO(P0)" catalog`。配布元・ファイル・ライセンスを確かめ、`lao plan e1` で取得するファイルと大きさを見ます。リポジトリに量子化の違うファイルが並んでいるときは `files` を使う 1 つに絞ります。
+2. **モデルを取得して測る：**
    ```powershell
-   lao p0 run --gpu-python C:\lao\engines\comfyui\.venv\Scripts\python.exe --skip-models
+   powershell -ExecutionPolicy Bypass -File scripts\setup-spark.ps1 -Phase models -Envs e1 -Execute
    ```
-2. **カタログの TODO を埋める**（`git grep -n "TODO(P0)" catalog config scripts`）。モデルの配布元・ファイル・ライセンスを確かめ、使うものを `status = "verified"` にします（[catalog/README.md](../catalog/README.md)）。
-3. **モデルを取る**（C に入ります）。同意が要るモデルのために、その PowerShell の中だけトークンを入れます（ファイルには書かない）：
-   ```powershell
-   $env:HF_TOKEN = "<0 章で作ったトークン>"
-   lao plan e1                 # 何を取るかと大きさの確認だけ
-   lao install e1 --execute
-   ```
-   E2〜E4 も同じです。全構成で約 400GB あるので、使う環境から順に取ります。
-4. **モデルを測る**：
-   ```powershell
-   lao p0 run --gpu-python C:\lao\engines\comfyui\.venv\Scripts\python.exe --envs e1
-   ```
-   結果は `p0-results\p0-<日時>.json` に残ります。
-5. **設定値の提案を受けて反映する**：`lao p0 propose` → `config\machine.proposed.toml` ができるので、`config\machine.toml` と見比べて採用します。
-6. `config\machine.toml` で人が決める値（一覧は [README](../README.md) の「設定するパラメータ」）：
-   - `[machine] runtime`：`native` か `wsl2`
-   - `[memory] budget_gb`：AI 用の予算（初期 96GB）
-   - `[server] api_key`：**固定の値を入れる**（空だと起動のたびに変わり、6 章のブラウザ利用で毎回キーを調べ直すことになります）。英数字 32 文字ほどの長い値にし、他の人に見せない
-   - `[policy] allow_third_party_quantized`：初期は `false` のまま
-7. E2・E4（画像・動画）：ComfyUI でワークフローを作り、API 形式で書き出して `catalog/workflows/` に置き、`bindings` を埋めます（[comfyui-workflows.md](comfyui-workflows.md)）。ComfyUI の画面は 6 章のトンネルを使うとメイン PC から操作できます。
-8. E3（読み上げ）：TTS の候補を選び、[tts-contract.md](tts-contract.md) の形の中継を用意して `[engines.tts]` に書きます。
-9. 日本語の評価課題（[prep.md](prep.md) 4 章）を各候補で行い、30 分以上の連続生成を**蓋を閉じた状態でも**行います（2.4 節）。
+   取得（C:\lao\models）→ 測定（`p0-results\`）→ `lao p0 propose` → `lao configure --apply-proposed`（GPU の上限、部品ごとのピーク・速度、打ち切り時間を machine.toml に採用）。E2〜E4 も同じです。全構成で約 400GB あるので、使う環境から順に取ります。
+3. **画像・動画（E2・E4）：** ComfyUI でワークフローを作り、API 形式で書き出して `catalog/workflows/` に置き、`bindings` を埋めます（[comfyui-workflows.md](comfyui-workflows.md)）。
+4. **読み上げ（E3）：** TTS の候補を選び、[tts-contract.md](tts-contract.md) の形の中継を用意して `[engines.tts]` に書きます。
+5. **評価：** 日本語の評価課題（[prep.md](prep.md) 4 章）を各候補で行います。仕上がりの良し悪しは利用者が見て決めます。
 
-## 5 Spark 上で起動の確認
+**利用者に聞いて決めること：** AI 用の予算（`[memory] budget_gb`、初期 96GB）、主に使う実行基盤（native か wsl2）、各環境の標準構成、第三者の量子化版を使うか（`[policy] allow_third_party_quantized`、初期は使わない）、UI を既存 OSS で済ませるか。決まった値は `lao configure --set 表.鍵=値` で書きます。
+
+### 3.1 事前に確かめた配布元（2026-10-29、Hugging Face の公開ページ）
+
+| カタログ | リポジトリ | 結果 |
+|---|---|---|
+| e1・e3・e4 の gemma-4-E4B-it | [ggml-org/gemma-4-E4B-it-GGUF](https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF) | ある。Q4_0 などの量子化版と mmproj が並ぶので、`files` を絞る（BF16 か、配布元の量子化か） |
+| e2 の gemma-4-26B-A4B-it | [ggml-org/gemma-4-26B-A4B-it-GGUF](https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF) | ある。mmproj と mtp のファイルもあるので `files` を絞る |
+| e1-omni の Qwen3-Omni-30B-A3B-Instruct | [ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF](https://huggingface.co/ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF) | ある |
+| e2 の Qwen-Image | [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main/split_files) | ある。`split_files/` に diffusion_models（bf16・fp8・nvfp4、2512 版）と text_encoders（qwen_2.5_vl_7b） |
+| e4-wan の Wan2.2-I2V-A14B | [Comfy-Org/Wan_2.2_ComfyUI_Repackaged](https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged) | ある。`split_files/diffusion_models/` に i2v の high_noise・low_noise（14B、fp8_scaled）など |
+| e4-ltx の LTX | カタログは `Lightricks/LTX-2.5` | **見つからない。** 公式は [Lightricks/LTX-2](https://huggingface.co/Lightricks/LTX-2)（19B、fp8 あり）と [Lightricks/LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3)・[LTX-2.3-fp8](https://huggingface.co/Lightricks/LTX-2.3-fp8)（22B）。到着後にどちらにするかを決めてカタログを直す |
+| 意味検索の Qwen3-Embedding-0.6B | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | ある。`Qwen3-Embedding-0.6B-f16.gguf` |
+| e1-lfm3-omni の LFM3-Omni | 未定 | 配布元を到着後に確かめる |
+
+## 4 メイン PC から使う（最後につなぐ）
+
+メイン PC の Claude Code か利用者が、2 章の報告にある PC 名と利用者名で流します。
 
 ```powershell
-cd C:\lao\local-ai-orchestrator
-lao serve --env e1
+powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -SparkHost <PC 名か IP> -SparkUser <利用者名> -Execute
 ```
 
-表示された `http://127.0.0.1:8710/?key=…` を Spark の Edge で開き、短い質問に答えが返れば成功です。止めるときは Ctrl+C。
+- `~/.ssh/config` に `Host spark`（ブラウザ用の `LocalForward 8710` つき）を足し、初回の接続で Spark のホスト鍵を登録し、`lao mcp --check` でつながるか確かめ、Claude Code に lao を登録します。
+- 確かめ方：Claude Code で「lao の status を見て」→「猫の画像を 1 枚作って」。
+- ブラウザで lao の画面を使う：`ssh -N spark` を動かしたまま、Edge で `http://127.0.0.1:8710/?key=<api_key>`。キーは Spark の `config\machine.toml` の `[server] api_key` にあります（2 章で自動で固定済み）。Edge の「アプリとしてインストール」をしておくと楽です。
+- **蓋を閉じて確かめる：** Spark の蓋を閉じ、5 分ほど待ってから、もう一度「lao の status を見て」。通れば 2.2 節の設定が効いています。
 
-## 6 メイン PC から使う
+使い方とファイルのやりとりは [remote.md](remote.md) にあります。
 
-手順の本体は [remote.md](remote.md) です。順番と確かめる点だけ書きます。
+## 5 必要なときだけ
 
-1. **Spark：** 0 章の公開鍵（`id_ed25519.pub`）を USB メモリから `C:\lao\local-ai-orchestrator` に置く。
-2. **Spark：** 管理者の PowerShell で `powershell -ExecutionPolicy Bypass -File scripts\enable-remote.ps1 -PublicKeyFile .\id_ed25519.pub -AutostartServe` を確認モードで動かし、内容を見てから `-Execute` を付けて実行する（[remote.md](remote.md)「準備（Spark 側）」）。最後に出る PC 名を控える。
-3. **Spark：** 一度サインインし直すか、`Start-ScheduledTask lao-serve` で lao serve を起動する。
-4. **メイン PC：** `~/.ssh/config` に `Host spark` を書く。ブラウザで画面を使うので `LocalForward 8710 127.0.0.1:8710` の 1 行も足す（[remote.md](remote.md)「準備（メイン PC 側）」「lao の画面をメイン PC で使う」）。
-5. **メイン PC：** `ssh spark C:/lao/venv/Scripts/lao.exe mcp --check` → `OK：lao serve に接続できました`
-6. **メイン PC：** `claude mcp add lao --scope user -- ssh spark C:/lao/venv/Scripts/lao.exe mcp` と、`~/.claude/settings.json` の `MCP_TOOL_TIMEOUT`。必要なら `~/.claude/CLAUDE.md` に使い方を書く。
-7. **メイン PC：** Claude Code で「lao の status を見て」と頼み、答えが返れば完了。続けて「猫の画像を 1 枚作って」で E2 を試す。
-8. **メイン PC：** `ssh -N spark` を動かしたまま、Edge で `http://127.0.0.1:8710/?key=<api_key>` を開く。「アプリとしてインストール」しておくと次から楽です。
-9. **蓋を閉じて確かめる：** Spark の蓋を閉じ、5 分ほど待ってから 5 と 7 をもう一度行う。通れば 2 章の設定が効いています。
-
-## 7 必要なときだけ
-
-- **意味検索：** `lao install embedding --execute` → `machine.toml` の `[embedding] enabled = true`
-- **コード実行：** `scripts\install-sandbox.ps1`（確認のみ）→ `-Execute` → `lao sandbox-check` がすべて合格したら `[sandbox] enabled = true`（WSL が要ります）
+- **意味検索：** `lao install embedding --execute` → `lao configure --set embedding.enabled=true`
+- **コード実行：** `scripts\install-sandbox.ps1`（確認のみ）→ `-Execute` → `lao sandbox-check` がすべて合格したら `lao configure --set sandbox.enabled=true`（WSL が要ります）
 
 ## 困ったとき
 
 | 起きたこと | 見るところ |
 |---|---|
-| メイン PC から `ssh spark` が通らない | Spark のネットワークが「プライベート」か（1 章 7）、Spark が眠っていないか（2 章）、IP が変わっていないか（1 章 8）、`Get-Service sshd` が Running か |
-| `mcp --check` が lao serve につながらないと言う | Spark で lao serve が動いているか（再起動の後はサインインが要る。2.3 節）。`Get-ScheduledTask lao-serve` |
-| 蓋を閉じるとしばらくして切れる | `powercfg /query SCHEME_CURRENT SUB_BUTTONS LIDACTION` の AC が 0 か、スリープが「なし」か、Wi-Fi の省電力（2.2 節）。有線 LAN を試す |
-| 蓋を閉じると生成が遅くなる | 熱で絞られています（2.4 節）。置き方を変えるか、蓋を開けて使う |
-| `lao` が見つからない | 3 章 5 の `Set-Alias`、またはフルパス `C:\lao\venv\Scripts\lao.exe` |
-| ffmpeg が見つからないと `lao doctor` が言う | 3 章 6 の `[engines.ffmpeg]` |
-| llama.cpp のビルドが失敗する | 3 章の最後（WSL2 案） |
-| モデルの取得で 401・403 | Hugging Face で利用条件に同意したか、`$env:HF_TOKEN` を入れたか |
+| メイン PC から `ssh spark` が通らない | Spark のネットワークが「プライベート」か、Spark が眠っていないか、IP が変わっていないか（ルーターで固定するとよい）、Spark で `Get-Service sshd` が Running か |
+| `mcp --check` が lao serve につながらないと言う | Spark で lao serve が動いているか（再起動の後はサインインが要る。2.2 節）。`Get-ScheduledTask lao-serve` |
+| 蓋を閉じるとしばらくして切れる | `powercfg /query SCHEME_CURRENT SUB_BUTTONS LIDACTION` の AC が 0 か、スリープが「なし」か、アダプターの省電力。有線 LAN を試す |
+| 蓋を閉じると生成が遅くなる | 熱で絞られています（2.2 節）。置き方を変えるか、蓋を開けて使う |
+| ブラウザ用の `ssh -N spark` と Claude Code の lao がぶつかる | lao の登録に `-o ClearAllForwardings=yes` が付いているか（`claude mcp get lao`） |
+| モデルの取得で 401・403 | Hugging Face で利用条件に同意したか、Spark の環境変数 `HF_TOKEN` があるか（入れた後に開いたターミナルで `claude remote-control` を起動し直す） |
+| `lao` が見つからない | フルパス `C:\lao\venv\Scripts\lao.exe` |
 
 ## 結果の残し方
 
-- 測定結果：`p0-results\`（lao が書きます）
-- 1 章 4 の記録、各エンジンの動作可否、主経路の判断：[plan.md](plan.md) 15 章と [prep.md](prep.md) 2 章の表を更新します
+- 測定結果：`p0-results\`（lao が書きます）。導入の記録：`D:\lao\logs\setup-*.txt`
+- 機種・ドライバの版・各エンジンの動作可否・主経路の判断：[plan.md](plan.md) 15 章と [prep.md](prep.md) 2 章の表を更新します
 - 動作を確かめたエンジンの版：`install-native.ps1` の `-LlamaCppRef`・`-ComfyUIRef` の既定値をその版に固定します
+- スクリプトを使わずに手で行うときの手順は [README](../README.md) の「実機が届いたらやること」と [remote.md](remote.md) にあります

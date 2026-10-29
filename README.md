@@ -21,7 +21,7 @@ RTX Spark（128GB 統合メモリ、Windows 11 on Arm）1台で、四つの目�
 
 ## 実機が届いたらやること
 
-コードは揃っています。実機では「検証して、設定値を埋める」だけです。開封から、画面を閉じたままメイン PC の Claude Code で使えるようになるまでの通しの手順は [docs/arrival.md](docs/arrival.md) にあります。**ユーザーの「開始」指示があるまで、以下は実行しません。**
+コードは揃っています。実機では「検証して、設定値を埋める」だけです。開封から、画面を閉じたままメイン PC の Claude Code で使えるようになるまでの通しの手順は [docs/arrival.md](docs/arrival.md) にあります。そこでは以下を `scripts\setup-spark.ps1` で Spark 上の Claude がまとめて流します。以下は手で行うときの手順です。**ユーザーの「開始」指示があるまで、以下は実行しません。**
 
 1. **導入（確認モードで内容を見てから実行）**
    - ネイティブ：`powershell -ExecutionPolicy Bypass -File scripts\install-native.ps1` → 内容を確認 → `-Execute` を付けて実行

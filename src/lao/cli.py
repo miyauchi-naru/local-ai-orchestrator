@@ -1,4 +1,4 @@
-"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | sandbox-check | mcp"""
+"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | configure | sandbox-check | mcp"""
 
 from __future__ import annotations
 
@@ -150,6 +150,48 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_configure(args) -> int:
+    import tomllib
+
+    from .setup import apply, auto_values, parse_value, proposed_values
+
+    config, _ = _paths(args)
+    if not config.exists():
+        example = REPO / "config" / "machine.example.toml"
+        print(f"{config} がありません。{example} をコピーしてから実行してください")
+        return 1
+    raw = tomllib.loads(config.read_text(encoding="utf-8"))
+    changes = []
+    if args.auto:
+        changes += auto_values(raw)
+    if args.apply_proposed:
+        proposed = config.with_name("machine.proposed.toml")
+        if not proposed.exists():
+            print(f"{proposed} がありません。先に lao p0 propose を実行してください")
+            return 1
+        changes += proposed_values(tomllib.loads(proposed.read_text(encoding="utf-8")))
+    for item in args.set or []:
+        name, sep, value = item.partition("=")
+        section, dot, key = name.strip().rpartition(".")
+        if not sep or not dot:
+            print(f"--set は 表.鍵=値 の形で指定してください：{item}")
+            return 1
+        changes.append((section, key, parse_value(value.strip()), "指定された値"))
+    if not changes:
+        print("変える値はありません")
+        return 0
+    try:
+        apply(config, changes, dry_run=args.dry_run)
+    except (ValueError, tomllib.TOMLDecodeError) as e:
+        print(f"書き換えられませんでした（ファイルは元のままです）：{e}")
+        return 1
+    for section, key, value, why in changes:
+        shown = "（表示しません）" if key == "api_key" else value
+        print(f"  [{section}] {key} = {shown}　… {why}")
+    print("（確認のみ。書き込んでいません）" if args.dry_run else f"{config} を書き換えました")
+    return 0
+
+
 def cmd_p0(args) -> int:
     from .config import load_machine
     from .p0.probe import propose, run
@@ -226,6 +268,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--gpu-python", help="PyTorch(CUDA) が入った Python。GPU の確保上限を測る")
     sp.add_argument("--envs", help="測る環境（例：e1,e2）")
     sp.add_argument("--skip-models", action="store_true")
+    sp = sub.add_parser("configure", help="machine.toml をコメントを残したまま書き換える")
+    sp.add_argument("--auto", action="store_true", help="ffmpeg・llama-server の場所と固定の API キーを自動で埋める")
+    sp.add_argument("--apply-proposed", action="store_true", help="lao p0 propose の測定値を採用する")
+    sp.add_argument("--set", action="append", metavar="表.鍵=値", help="値を一つ書く（何度でも）")
+    sp.add_argument("--dry-run", action="store_true", help="書き込まずに変更点だけ表示する")
     sub.add_parser("sandbox-check", help="コード実行の箱が通信できず、PC のファイルも見えないことを確かめる")
     sp = sub.add_parser("mcp", help="別の PC の Claude Code から使う MCP サーバー（SSH 越しに起動する）")
     sp.add_argument("--check", action="store_true", help="lao serve につながるかだけ確かめる")
@@ -240,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_plan(args, execute=args.execute)
     if args.cmd == "serve":
         return cmd_serve(args)
+    if args.cmd == "configure":
+        return cmd_configure(args)
     if args.cmd == "sandbox-check":
         return cmd_sandbox_check(args)
     if args.cmd == "mcp":
