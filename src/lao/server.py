@@ -22,7 +22,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .library import Artifact
 from .service import Service
@@ -60,9 +60,24 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
                 "generation": a.generation, "url": f"/files/{a.ref}"}
 
     # ------------------------------------------------------------ 画面
+    def asset(name: str) -> str:
+        return resources.files("lao").joinpath("web", name).read_text(encoding="utf-8")
+
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return resources.files("lao").joinpath("ui.html").read_text(encoding="utf-8")
+        return asset("index.html")
+
+    @app.get("/manifest.webmanifest")
+    def manifest():
+        return Response(asset("manifest.webmanifest"), media_type="application/manifest+json")
+
+    @app.get("/sw.js")
+    def service_worker():
+        return Response(asset("sw.js"), media_type="text/javascript")
+
+    @app.get("/icon.svg")
+    def icon():
+        return Response(asset("icon.svg"), media_type="image/svg+xml")
 
     # ------------------------------------------------------------ 環境
     @app.get("/api/environments", dependencies=[Depends(auth)])
@@ -110,6 +125,100 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     @app.get("/api/library", dependencies=[Depends(auth)])
     def library(kind: str | None = None, env: str | None = None):
         return {"items": [art_json(a) for a in service.library.list(kind, env)]}
+
+    @app.get("/api/library/{art_id}/versions", dependencies=[Depends(auth)])
+    def versions(art_id: str):
+        items = []
+        for v in range(1, service.library.latest_version(art_id) + 1):
+            try:
+                items.append(art_json(service.library.get(f"{art_id}@{v}")))
+            except (KeyError, ValueError):
+                continue
+        return {"items": items}
+
+    # ------------------------------------------------------------ 会話
+    @app.get("/api/conversations", dependencies=[Depends(auth)])
+    def conversations():
+        return {"items": [c.summary() for c in service.conversations.list()]}
+
+    @app.post("/api/conversations", dependencies=[Depends(auth)])
+    def new_conversation(body: dict | None = None):
+        if not service.runtime:
+            raise HTTPException(409, "環境が選ばれていません。先に環境を選んでください")
+        c = service.conversations.create(service.runtime.env.id, service.runtime.conf.id)
+        return c.summary()
+
+    @app.get("/api/conversations/{cid}", dependencies=[Depends(auth)])
+    def get_conversation(cid: str):
+        try:
+            c = service.conversations.get(cid)
+        except KeyError as e:
+            raise HTTPException(404, "会話がありません") from e
+        return {**c.summary(), "turns": [t.__dict__ for t in c.turns]}
+
+    @app.patch("/api/conversations/{cid}", dependencies=[Depends(auth)])
+    def rename_conversation(cid: str, body: dict):
+        try:
+            c = service.conversations.get(cid)
+        except KeyError as e:
+            raise HTTPException(404, "会話がありません") from e
+        c.title = str(body.get("title", c.title))[:100]
+        service.conversations.save(c)
+        return c.summary()
+
+    @app.delete("/api/conversations/{cid}", dependencies=[Depends(auth)])
+    def delete_conversation(cid: str):
+        # 会話を消しても、成果物フォルダの画像・音声・動画は残す
+        service.conversations.delete(cid)
+        return {"deleted": cid}
+
+    @app.post("/api/conversations/{cid}/messages", dependencies=[Depends(auth)])
+    async def send_message(cid: str, body: dict):
+        orch = runtime_or_409()
+        try:
+            c = service.conversations.get(cid)
+        except KeyError as e:
+            raise HTTPException(404, "会話がありません") from e
+        rt = service.runtime
+        if (c.env_id, c.configuration) != (rt.env.id, rt.conf.id):
+            # 勝手に環境を切り替えない（R07）。画面側で利用者に切り替えを確かめる
+            raise HTTPException(409, f"この会話は {c.env_id.upper()}（{c.configuration}）の会話です。続けるには環境を切り替えてください")
+        text = str(body.get("text", "")).strip()
+        attachments = [r for r in body.get("attachments", []) if isinstance(r, str)]
+        for r in attachments:
+            try:
+                service.library.get(r)
+            except (KeyError, ValueError) as e:
+                raise HTTPException(400, f"添付 {r} がありません") from e
+        if not text:
+            raise HTTPException(400, "メッセージが空です")
+        from .conversations import Turn
+
+        c.turns.append(Turn("user", text, attachments=attachments))
+        if c.title == "新しい会話":
+            c.title = text.splitlines()[0][:40]
+        service.conversations.save(c)
+        reply = Turn("assistant", "")
+
+        async def stream():
+            try:
+                all_attachments = [r for t in c.turns for r in t.attachments + t.artifacts]
+                async for ev in orch.respond(c.model_messages(), list(dict.fromkeys(all_attachments))):
+                    if ev.type == "text":
+                        reply.content += ev.text
+                    elif ev.type == "progress":
+                        reply.progress.append(ev.text)
+                    elif ev.type == "artifacts":
+                        reply.artifacts += ev.data["refs"]
+                    elif ev.type == "error":
+                        reply.error = ev.text
+                    yield json.dumps({"type": ev.type, "text": ev.text, "data": ev.data}, ensure_ascii=False) + "\n"
+            finally:
+                c.turns.append(reply)
+                service.conversations.save(c)
+            yield json.dumps({"type": "done", "title": c.title}, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson")
 
     @app.get("/files/{ref}", dependencies=[Depends(auth)])
     def file(ref: str):

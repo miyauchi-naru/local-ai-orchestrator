@@ -62,3 +62,49 @@ def test_upload_rejects_corrupt_video(client, tmp_path):
 
 def test_ui_served(client):
     assert "ローカルAI" in client.get("/").text
+
+
+def test_pwa_assets_served(client):
+    m = client.get("/manifest.webmanifest")
+    assert m.status_code == 200 and m.json()["display"] == "standalone"
+    assert "/api" in client.get("/sw.js").text  # API は保存しない
+    assert client.get("/icon.svg").headers["content-type"].startswith("image/svg")
+
+
+def _send(client, cid, text, attachments=()):
+    with client.stream("POST", f"/api/conversations/{cid}/messages",
+                       json={"text": text, "attachments": list(attachments)}) as r:
+        assert r.status_code == 200
+        return [__import__("json").loads(line) for line in r.iter_lines() if line]
+
+
+def test_conversation_flow(client):
+    assert client.post("/api/conversations").status_code == 409  # 環境が未選択
+    client.post("/api/environment", json={"env": "e2"})
+    cid = client.post("/api/conversations").json()["id"]
+    events = _send(client, cid, "猫の画像を作って\n詳しく")
+    assert events[-1] == {"type": "done", "title": "猫の画像を作って"}
+    refs = [r for e in events if e["type"] == "artifacts" for r in e["data"]["refs"]]
+    assert refs
+    c = client.get(f"/api/conversations/{cid}").json()
+    assert [t["role"] for t in c["turns"]] == ["user", "assistant"]
+    assert c["turns"][1]["artifacts"] == refs and c["turns"][1]["progress"]
+    # 作った画像の版の一覧
+    art_id = refs[0].split("@")[0]
+    assert client.get(f"/api/library/{art_id}/versions").status_code == 200
+    # 名前の変更・一覧・削除
+    assert client.patch(f"/api/conversations/{cid}", json={"title": "猫"}).json()["title"] == "猫"
+    assert [x["id"] for x in client.get("/api/conversations").json()["items"]] == [cid]
+    client.delete(f"/api/conversations/{cid}")
+    assert client.get(f"/api/conversations/{cid}").status_code == 404
+
+
+def test_conversation_rejects_other_environment_and_bad_input(client):
+    client.post("/api/environment", json={"env": "e1"})
+    cid = client.post("/api/conversations").json()["id"]
+    assert client.post(f"/api/conversations/{cid}/messages", json={"text": ""}).status_code == 400
+    r = client.post(f"/api/conversations/{cid}/messages", json={"text": "x", "attachments": ["000000000000@1"]})
+    assert r.status_code == 400
+    client.post("/api/environment", json={"env": "e2"})
+    assert client.post(f"/api/conversations/{cid}/messages", json={"text": "x"}).status_code == 409
+    assert client.get("/api/conversations/../x").status_code == 404

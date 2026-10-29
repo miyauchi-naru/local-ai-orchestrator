@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .conversations import ConversationStore
 from .config import Environment, MachineConfig, load_catalog, missing_capabilities, check_policy
 from .jobs import TERMINAL, JobManager
 from .library import Library
@@ -20,6 +21,7 @@ class Service:
         self.catalog: dict[str, Environment] = load_catalog(catalog_dir)
         root = machine.path_of("root")
         self.library = Library(machine.path_of("library"))
+        self.conversations = ConversationStore(root / "conversations")
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
         self.media = Media(ff.get("binary", "ffmpeg"), ff.get("ffprobe", "ffprobe"))

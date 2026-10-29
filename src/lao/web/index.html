@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ローカルAI</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#f5f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f1e1d" media="(prefers-color-scheme: dark)">
+<style>
+:root {
+  --bg: #faf9f5; --side: #f3f1ea; --panel: #ffffff; --fg: #1f1e1d; --muted: #6f6c64; --faint: #9a968c;
+  --line: #e6e2d8; --hover: #ebe8de; --accent: #c96442; --accent-fg: #fff; --user: #efece3; --warn: #b4441f;
+  --ok: #3f7d4e; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #262624; --side: #1f1e1d; --panel: #30302e; --fg: #ecebe6; --muted: #a9a69c; --faint: #7d7a72;
+    --line: #3b3a37; --hover: #353432; --accent: #d97757; --user: #3a3936; --warn: #ef8a62; --ok: #7cc28a;
+    --shadow: 0 1px 2px rgba(0,0,0,.2), 0 4px 16px rgba(0,0,0,.25); }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.7 system-ui, -apple-system, "Segoe UI", "Yu Gothic UI", "Hiragino Sans", sans-serif; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; border-radius: 8px; padding: 6px 10px; }
+button:hover { background: var(--hover); }
+button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.app { display: grid; grid-template-columns: 268px 1fr auto; height: 100vh; height: 100dvh; }
+.app.side-hidden { grid-template-columns: 0 1fr auto; }
+
+/* サイドバー */
+aside.side { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.side-head { display: flex; align-items: center; gap: 8px; padding: 14px 12px 8px; }
+.brand { font-weight: 650; letter-spacing: .01em; flex: 1; display: flex; align-items: center; gap: 8px; }
+.brand img { width: 22px; height: 22px; }
+.newchat { margin: 4px 10px 10px; display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; color: var(--fg); }
+.newchat .plus { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; font-size: 16px; line-height: 1; }
+.side-nav { padding: 0 10px; }
+.side-nav button { width: 100%; text-align: left; display: flex; gap: 8px; align-items: center; color: var(--muted); }
+.side-label { font-size: 12px; color: var(--faint); padding: 14px 20px 4px; }
+.convs { flex: 1; overflow: auto; padding: 0 10px 12px; }
+.conv { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 6px 8px; cursor: pointer; }
+.conv:hover, .conv.active { background: var(--hover); }
+.conv .t { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; }
+.conv .del { visibility: hidden; padding: 0 6px; color: var(--faint); }
+.conv:hover .del { visibility: visible; }
+.badge { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--line); color: var(--muted); flex: none; }
+.side-foot { border-top: 1px solid var(--line); padding: 10px 14px; font-size: 12px; color: var(--muted); }
+.meter { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 6px; }
+.meter > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+
+/* 中央 */
+main { display: flex; flex-direction: column; min-width: 0; height: 100vh; height: 100dvh; }
+.top { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 52px; }
+.top .title { font-weight: 600; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.status-chip { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.dot.busy { background: var(--accent); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: .35; } }
+.scroll { flex: 1; overflow: auto; }
+.thread { max-width: 760px; margin: 0 auto; padding: 8px 20px 40px; }
+.turn { margin: 18px 0; }
+.turn.user { display: flex; justify-content: flex-end; }
+.bubble { background: var(--user); border-radius: 14px; padding: 10px 14px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+.att-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 6px; }
+.assistant .body { word-break: break-word; }
+.assistant .body p { margin: 0 0 .8em; }
+.assistant .body pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; font-size: 13px; }
+.assistant .body code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .92em; }
+.assistant .body :not(pre) > code { background: var(--hover); padding: 1px 5px; border-radius: 5px; }
+.assistant .body ul, .assistant .body ol { padding-left: 1.4em; margin: 0 0 .8em; }
+.assistant .body h1, .assistant .body h2, .assistant .body h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+.assistant .body a { color: var(--accent); }
+.steps { font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding: 2px 0 2px 12px; margin: 0 0 10px; }
+.steps summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.steps summary::-webkit-details-marker { display: none; }
+.spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.err { color: var(--warn); font-weight: 600; margin: 6px 0; }
+.cards { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 10px; }
+.card { width: 220px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); cursor: pointer; text-align: left; padding: 0; box-shadow: var(--shadow); }
+.card:hover { border-color: var(--accent); background: var(--panel); }
+.card .thumb { height: 140px; background: var(--hover); display: grid; place-items: center; overflow: hidden; color: var(--muted); font-size: 13px; }
+.card .thumb img, .card .thumb video { width: 100%; height: 100%; object-fit: cover; }
+.card .cap { padding: 8px 10px; font-size: 12px; }
+.card .cap b { display: block; font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 3px 6px 3px 3px; }
+.chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 5px; }
+.chip .k { width: 28px; height: 28px; border-radius: 5px; background: var(--hover); display: grid; place-items: center; font-size: 11px; }
+.chip button { padding: 0 4px; }
+
+/* 入力欄 */
+.composer-wrap { padding: 0 20px 18px; }
+.composer { max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 10px 12px 8px; }
+.composer textarea { width: 100%; border: 0; outline: 0; resize: none; background: transparent; min-height: 28px; max-height: 240px; padding: 4px 4px; }
+.composer .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.composer .row { display: flex; align-items: center; gap: 6px; }
+.composer .grow { flex: 1; }
+.envpick { border: 1px solid var(--line); border-radius: 10px; padding: 4px 8px; background: transparent; font-size: 13px; max-width: 280px; }
+.send { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; padding: 0; font-size: 18px; }
+.send:hover { background: var(--accent); filter: brightness(1.05); }
+.send:disabled { opacity: .4; cursor: default; }
+.hint { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--faint); text-align: center; }
+
+/* 空の画面 */
+.empty { max-width: 760px; margin: 12vh auto 0; padding: 0 20px; text-align: center; }
+.empty h1 { font-weight: 500; font-size: 30px; margin: 0 0 6px; font-family: ui-serif, Georgia, "Yu Mincho", serif; }
+.empty p { color: var(--muted); margin: 0 0 24px; }
+.envgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; text-align: left; }
+.envcard { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: var(--panel); cursor: pointer; }
+.envcard:hover, .envcard.on { border-color: var(--accent); }
+.envcard b { display: block; }
+.envcard span { font-size: 13px; color: var(--muted); }
+.envcard .note { font-size: 12px; color: var(--warn); }
+
+/* 右パネル */
+.panel { width: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); transition: width .2s; display: flex; flex-direction: column; }
+.panel.open { width: min(460px, 42vw); }
+.panel-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.panel-head b { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.panel-body { flex: 1; overflow: auto; padding: 14px; }
+.preview img, .preview video { width: 100%; border-radius: 10px; background: var(--hover); }
+.preview audio { width: 100%; }
+.preview pre { white-space: pre-wrap; font-size: 13px; }
+.vers { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.vers button { border: 1px solid var(--line); font-size: 12px; }
+.vers button.on { border-color: var(--accent); color: var(--accent); }
+dl.meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px; margin: 12px 0; }
+dl.meta dt { color: var(--muted); }
+dl.meta dd { margin: 0; word-break: break-word; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); color: var(--fg, inherit); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.libgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.libgrid .card { width: auto; }
+.filters { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.filters button { border: 1px solid var(--line); font-size: 12px; }
+.filters button.on { border-color: var(--accent); color: var(--accent); }
+
+/* ダイアログ */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; place-items: center; z-index: 10; padding: 16px; }
+.modal.show { display: grid; }
+.dialog { background: var(--panel); border-radius: 16px; padding: 20px; width: min(440px, 100%); box-shadow: var(--shadow); }
+.dialog h2 { margin: 0 0 8px; font-size: 17px; }
+.dialog p { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+.dialog input { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--bg); margin-bottom: 14px; }
+.dialog .actions { justify-content: flex-end; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; }
+.toast.show { opacity: 1; }
+.menu-btn { display: none; }
+
+@media (max-width: 860px) {
+  .app, .app.side-hidden { grid-template-columns: 1fr; }
+  aside.side { position: fixed; inset: 0 auto 0 0; width: 280px; z-index: 5; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  .app.side-open aside.side { transform: none; }
+  .menu-btn { display: inline-block; }
+  .panel.open { position: fixed; inset: 0; width: 100%; z-index: 6; }
+  .envgrid { grid-template-columns: 1fr; }
+  .thread, .composer-wrap { padding-left: 16px; padding-right: 16px; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side">
+    <div class="side-head">
+      <div class="brand"><img src="/icon.svg" alt="">ローカルAI</div>
+      <button id="hideSide" title="サイドバーを閉じる" aria-label="サイドバーを閉じる">⟨</button>
+    </div>
+    <button class="newchat" id="newChat"><span class="plus">+</span>新しい会話</button>
+    <div class="side-nav"><button id="openLibrary">▦ 成果物ライブラリ</button></div>
+    <div class="side-label">最近の会話</div>
+    <div class="convs" id="convs"></div>
+    <div class="side-foot" id="sideFoot">
+      <div id="memText">メモリ —</div>
+      <div class="meter"><div id="memBar"></div></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="top">
+      <button class="menu-btn" id="menuBtn" aria-label="メニュー">☰</button>
+      <button id="showSide" title="サイドバーを開く" aria-label="サイドバーを開く" hidden>⟩</button>
+      <div class="title" id="title"></div>
+      <div class="status-chip" id="statusChip"><span class="dot" id="dot"></span><span id="statusText">接続中…</span></div>
+    </div>
+    <div class="scroll" id="scroll">
+      <div id="empty" class="empty">
+        <h1>何をしましょうか？</h1>
+        <p>使う環境を選んでから話しかけてください。素材やデータは外部に送りません。</p>
+        <div class="envgrid" id="envGrid"></div>
+      </div>
+      <div class="thread" id="thread"></div>
+    </div>
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="chips" id="chips"></div>
+        <textarea id="input" rows="1" placeholder="相談・依頼を入力…" aria-label="メッセージ"></textarea>
+        <div class="row">
+          <input type="file" id="file" hidden multiple accept="image/*,audio/*,video/*">
+          <button id="attach" title="画像・音声・動画を添付" aria-label="添付">＋</button>
+          <select class="envpick" id="envPick" aria-label="環境"></select>
+          <div class="grow"></div>
+          <button class="send" id="send" title="送信（Enter）" aria-label="送信">↑</button>
+        </div>
+      </div>
+      <div class="hint" id="hint">Enter で送信、Shift+Enter で改行</div>
+    </div>
+  </main>
+
+  <section class="panel" id="panel" aria-label="成果物">
+    <div class="panel-head"><b id="panelTitle"></b><button id="closePanel" aria-label="閉じる">✕</button></div>
+    <div class="panel-body" id="panelBody"></div>
+  </section>
+</div>
+
+<div class="modal" id="modal"><div class="dialog" id="dialog"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const ENV_DESC = {
+  e1: "画像・音声・動画を読み、相談や推論をする", e2: "参考画像を見ながら画像を作り、直す",
+  e3: "参考音声の話し方で文章を読み上げる", e4: "画像を元に短い動画を作る",
+};
+const state = { key: "", envs: [], active: null, convs: [], conv: null, attachments: [], running: false, jobId: null, libFilter: "" };
+
+/* ---------- 共通 ---------- */
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600); }
+const fileUrl = (ref) => `/files/${ref}?key=${encodeURIComponent(state.key)}`;
+
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}), Authorization: "Bearer " + state.key };
+  if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
+  const r = await fetch(path, { ...opts, headers });
+  if (r.status === 401) { askKey(); throw new Error("API キーが必要です"); }
+  if (!r.ok) { let d = await r.text(); try { d = JSON.parse(d).detail; } catch (e) {} const err = new Error(d); err.status = r.status; throw err; }
+  return r;
+}
+const getJSON = async (p, o) => (await api(p, o)).json();
+
+function dialog(html, onMount) {
+  $("dialog").innerHTML = html; $("modal").classList.add("show"); onMount && onMount($("dialog"));
+}
+function closeDialog() { $("modal").classList.remove("show"); }
+function confirmBox(title, text, okLabel) {
+  return new Promise((res) => {
+    dialog(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="actions"><button class="btn" data-a="0">やめる</button><button class="btn primary" data-a="1">${esc(okLabel)}</button></div>`,
+      (d) => d.querySelectorAll("button").forEach((b) => (b.onclick = () => { closeDialog(); res(b.dataset.a === "1"); })));
+  });
+}
+function askKey() {
+  dialog(`<h2>API キーを入力</h2><p>サーバーを起動したときに表示されたキーです。この PC のブラウザにだけ保存します。</p>
+    <input id="keyInput" type="password" autocomplete="off" placeholder="API キー"><div class="actions"><button class="btn primary" id="keyOk">接続</button></div>`,
+    (d) => { const i = d.querySelector("#keyInput"); i.focus();
+      const go = () => { state.key = i.value.trim(); store("lao-key", state.key); closeDialog(); boot(); };
+      d.querySelector("#keyOk").onclick = go; i.onkeydown = (e) => e.key === "Enter" && go(); });
+}
+
+/* ---------- Markdown（最小限、HTML は全てエスケープ） ---------- */
+function md(src) {
+  const blocks = String(src || "").split(/```/);
+  let html = "";
+  blocks.forEach((b, i) => {
+    if (i % 2) { html += `<pre><code>${esc(b.replace(/^\w*\n/, ""))}</code></pre>`; return; }
+    const lines = esc(b).split("\n"); let list = null, para = [];
+    const flush = () => { if (para.length) { html += `<p>${para.join("<br>")}</p>`; para = []; } if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of lines) {
+      const line = inline(raw);
+      let m;
+      if (!raw.trim()) { flush(); continue; }
+      if ((m = raw.match(/^(#{1,3})\s+(.*)/))) { flush(); html += `<h3>${inline(m[2])}</h3>`; continue; }
+      if ((m = raw.match(/^\s*[-*]\s+(.*)/))) { if (para.length) flush(); if (list !== "ul") { if (list) html += `</${list}>`; html += "<ul>"; list = "ul"; } html += `<li>${inline(m[1])}</li>`; continue; }
+      if ((m = raw.match(/^\s*\d+[.)]\s+(.*)/))) { if (para.length) flush(); if (list !== "ol") { if (list) html += `</${list}>`; html += "<ol>"; list = "ol"; } html += `<li>${inline(m[1])}</li>`; continue; }
+      if (list) { html += `</${list}>`; list = null; }
+      para.push(line);
+    }
+    flush();
+  });
+  return html;
+}
+function inline(s) {
+  return s.replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+/* ---------- 成果物 ---------- */
+const artCache = new Map();
+async function art(ref) {
+  if (!artCache.has(ref)) {
+    const id = ref.split("@")[0];
+    const d = await getJSON(`/api/library/${id}/versions`);
+    d.items.forEach((a) => artCache.set(a.ref, a));
+  }
+  return artCache.get(ref);
+}
+function thumb(a) {
+  if (!a) return `<div class="thumb">見つかりません</div>`;
+  if (a.kind === "image") return `<div class="thumb"><img src="${fileUrl(a.ref)}" alt="" loading="lazy"></div>`;
+  if (a.kind === "video") return `<div class="thumb"><video src="${fileUrl(a.ref)}#t=0.1" muted preload="metadata"></video></div>`;
+  if (a.kind === "audio") return `<div class="thumb">♪ 音声</div>`;
+  return `<div class="thumb">📄 テキスト</div>`;
+}
+const KIND = { image: "画像", audio: "音声", video: "動画", text: "テキスト" };
+async function cardHTML(ref) {
+  const a = await art(ref).catch(() => null);
+  return `<button class="card" data-art="${esc(ref)}">${thumb(a)}<div class="cap"><b>${esc(a ? a.title : ref)}</b>${a ? KIND[a.kind] + "・" + a.env.toUpperCase() + "・v" + ref.split("@")[1] : ""}</div></button>`;
+}
+async function chipHTML(ref, removable) {
+  const a = await art(ref).catch(() => null);
+  const icon = a && a.kind === "image" ? `<img src="${fileUrl(ref)}" alt="">` : `<span class="k">${a ? KIND[a.kind].slice(0, 2) : "?"}</span>`;
+  return `<span class="chip">${icon}${esc(a ? a.title : ref)}${removable ? `<button data-drop="${esc(ref)}" aria-label="外す">✕</button>` : ""}</span>`;
+}
+
+async function openArtifact(ref) {
+  const a = await art(ref); if (!a) return;
+  const id = ref.split("@")[0];
+  const vers = (await getJSON(`/api/library/${id}/versions`)).items;
+  vers.forEach((v) => artCache.set(v.ref, v));
+  $("panelTitle").textContent = a.title;
+  let preview = "";
+  if (a.kind === "image") preview = `<img src="${fileUrl(a.ref)}" alt="">`;
+  else if (a.kind === "video") preview = `<video src="${fileUrl(a.ref)}" controls></video>`;
+  else if (a.kind === "audio") preview = `<audio src="${fileUrl(a.ref)}" controls></audio>`;
+  else preview = `<pre>${esc(await (await api(`/files/${a.ref}`)).text())}</pre>`;
+  const g = a.generation || {};
+  const rows = [["種類", KIND[a.kind]], ["環境", a.env.toUpperCase()], ["ID", a.ref], ["作成", new Date(a.created_at * 1000).toLocaleString("ja-JP")],
+    ["モデル", g.model], ["プロンプト", g.prompt || g.instruction || g.question], ["シード", g.seed],
+    ["長さ", g.actual_seconds != null ? `${g.actual_seconds} 秒（指定 ${g.requested_seconds} 秒）` : null],
+    ["音声", g.has_audio == null ? null : g.has_audio ? "あり" : "なし"], ["元素材", (a.sources || []).join(", ")]].filter((r) => r[1] != null && r[1] !== "");
+  $("panelBody").innerHTML = `<div class="preview">${preview}</div>
+    ${vers.length > 1 ? `<div class="vers">${vers.map((v) => `<button data-art="${v.ref}" class="${v.ref === a.ref ? "on" : ""}">v${v.ref.split("@")[1]}</button>`).join("")}</div>` : ""}
+    <dl class="meta">${rows.map((r) => `<dt>${esc(r[0])}</dt><dd>${esc(r[1])}</dd>`).join("")}</dl>
+    <div class="actions"><button class="btn primary" data-use="${a.ref}">この版を添付</button><a class="btn" href="${fileUrl(a.ref)}" download style="text-decoration:none;padding:6px 10px;border-radius:8px">保存</a></div>`;
+  $("panel").classList.add("open");
+}
+
+async function openLibrary() {
+  $("panelTitle").textContent = "成果物ライブラリ";
+  const kinds = [["", "すべて"], ["image", "画像"], ["audio", "音声"], ["video", "動画"], ["text", "テキスト"]];
+  const items = (await getJSON("/api/library" + (state.libFilter ? `?kind=${state.libFilter}` : ""))).items;
+  items.forEach((a) => artCache.set(a.ref, a));
+  const cards = await Promise.all(items.slice(0, 60).map((a) => cardHTML(a.ref)));
+  $("panelBody").innerHTML = `<div class="filters">${kinds.map(([k, l]) => `<button data-filter="${k}" class="${state.libFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    <div class="libgrid">${cards.join("") || '<p style="color:var(--muted)">まだありません</p>'}</div>`;
+  $("panel").classList.add("open");
+}
+
+/* ---------- 環境・状態 ---------- */
+async function refreshStatus() {
+  try {
+    const d = await getJSON("/api/environments");
+    state.envs = d.environments; state.active = d.active;
+    renderEnvPick(); renderEnvGrid();
+    const a = d.active;
+    if (a && a.environment) {
+      const m = a.memory, pct = Math.min(100, (m.used_gb / m.budget_gb) * 100);
+      $("memText").textContent = `メモリ ${m.used_gb} / ${m.budget_gb} GB・${a.loaded.length ? a.loaded.join("、") : "未ロード"}`;
+      $("memBar").style.width = pct + "%";
+      const busy = !!a.lock.holder || state.running;
+      $("dot").className = "dot" + (busy ? " busy" : "");
+      $("statusText").textContent = `${a.environment.id.toUpperCase()} ${a.environment.name}${busy ? "・実行中" : ""}`;
+    } else { $("statusText").textContent = "環境を選んでください"; $("dot").className = "dot"; }
+  } catch (e) { $("statusText").textContent = "接続できません"; $("dot").className = "dot"; }
+}
+function activeKey() { const a = state.active; return a && a.environment ? `${a.environment.id}|${a.configuration.id}` : ""; }
+function renderEnvPick() {
+  const sel = $("envPick"); const key = activeKey();
+  sel.innerHTML = (key ? "" : `<option value="">環境を選ぶ…</option>`) + state.envs.flatMap((e) => e.configurations.map((c) =>
+    `<option value="${e.id}|${c.id}">${e.id.toUpperCase()} ${esc(e.name)}・${esc(c.label)}${c.status === "verified" ? "" : "（未検証）"}</option>`)).join("");
+  sel.value = key;
+}
+function renderEnvGrid() {
+  const key = activeKey();
+  $("envGrid").innerHTML = state.envs.map((e) => {
+    const c = e.configurations[0];
+    const on = key.startsWith(e.id + "|");
+    const warn = c.missing.length || c.policy.length ? `<div class="note">機能限定：${esc([...c.missing, ...c.policy].join("、"))}</div>` : "";
+    return `<div class="envcard ${on ? "on" : ""}" data-env="${e.id}|${c.id}" role="button" tabindex="0"><b>${e.id.toUpperCase()} ${esc(e.name)}</b><span>${esc(ENV_DESC[e.id] || "")}</span>${warn}</div>`;
+  }).join("");
+}
+async function switchEnv(value, { confirmFirst = true } = {}) {
+  if (!value || value === activeKey()) return true;
+  if (state.running) { toast("実行中は切り替えられません"); renderEnvPick(); return false; }
+  if (confirmFirst && activeKey()) {
+    const ok = await confirmBox("環境を切り替えますか？", "いまロードしているモデルを下ろしてから切り替えます。次の返答はモデルの読み込みから始まるため時間がかかります。", "切り替える");
+    if (!ok) { renderEnvPick(); return false; }
+  }
+  const [env, configuration] = value.split("|");
+  try { await api("/api/environment", { method: "POST", json: { env, configuration } }); }
+  catch (e) { toast(e.message); renderEnvPick(); return false; }
+  await refreshStatus(); return true;
+}
+
+/* ---------- 会話 ---------- */
+async function loadConvs() {
+  state.convs = (await getJSON("/api/conversations")).items;
+  $("convs").innerHTML = state.convs.map((c) => `<div class="conv ${state.conv && state.conv.id === c.id ? "active" : ""}" data-conv="${c.id}">
+    <span class="badge">${c.env_id.toUpperCase()}</span><span class="t">${esc(c.title)}</span><button class="del" data-del="${c.id}" aria-label="削除">✕</button></div>`).join("")
+    || `<div style="padding:8px;color:var(--faint);font-size:13px">まだありません</div>`;
+}
+async function openConv(id) {
+  const c = await getJSON(`/api/conversations/${id}`);
+  const want = `${c.env_id}|${c.configuration}`;
+  if (want !== activeKey()) {
+    const ok = await confirmBox(`この会話は ${c.env_id.toUpperCase()} の会話です`, "続けるには環境を切り替えます。読むだけなら切り替えなくても表示できます。", "切り替えて開く");
+    if (ok && !(await switchEnv(want, { confirmFirst: false }))) return;
+  }
+  state.conv = c; renderThread(); loadConvs(); closeSideMobile();
+}
+function newChat() { state.conv = null; state.attachments = []; renderChips(); renderThread(); loadConvs(); $("input").focus(); closeSideMobile(); }
+
+async function renderThread() {
+  const c = state.conv;
+  $("title").textContent = c ? c.title : "";
+  $("empty").style.display = c && c.turns.length ? "none" : "";
+  const th = $("thread"); th.innerHTML = "";
+  if (!c) return;
+  for (const t of c.turns) th.appendChild(await turnEl(t));
+  scrollDown();
+}
+async function turnEl(t) {
+  const el = document.createElement("div");
+  if (t.role === "user") {
+    el.className = "turn user";
+    const chips = t.attachments && t.attachments.length ? `<div class="att-row">${(await Promise.all(t.attachments.map((r) => chipHTML(r, false)))).join("")}</div>` : "";
+    el.innerHTML = `<div>${chips}<div class="bubble">${esc(t.content)}</div></div>`;
+  } else {
+    el.className = "turn assistant";
+    el.innerHTML = assistantHTML(t, false);
+    await fillCards(el, t.artifacts || []);
+  }
+  return el;
+}
+function assistantHTML(t, live) {
+  const steps = t.progress && t.progress.length
+    ? `<details class="steps" ${live ? "open" : ""}><summary>${live ? '<span class="spin"></span>' : "▸"} ${esc(live ? t.progress[t.progress.length - 1] : `作業の記録（${t.progress.length}）`)}</summary>${t.progress.map((p) => `<div>${esc(p)}</div>`).join("")}</details>`
+    : live ? `<div class="steps"><span class="spin"></span> 考えています…</div>` : "";
+  return `${steps}<div class="cards"></div>${t.error ? `<div class="err">${esc(t.error)}</div>` : ""}<div class="body">${md(t.content)}</div>`;
+}
+async function fillCards(el, refs) {
+  const box = el.querySelector(".cards");
+  box.innerHTML = (await Promise.all(refs.map((r) => cardHTML(r)))).join("");
+}
+function scrollDown() { const s = $("scroll"); s.scrollTop = s.scrollHeight; }
+
+async function send() {
+  const text = $("input").value.trim();
+  if (!text || state.running) return;
+  if (!activeKey()) { toast("先に環境を選んでください"); return; }
+  if (!state.conv || `${state.conv.env_id}|${state.conv.configuration}` !== activeKey()) {
+    const c = await getJSON("/api/conversations", { method: "POST", json: {} });
+    state.conv = { ...c, turns: [] };
+  }
+  const refs = state.attachments.slice();
+  const user = { role: "user", content: text, attachments: refs };
+  state.conv.turns.push(user);
+  $("input").value = ""; autosize(); state.attachments = []; renderChips();
+  $("empty").style.display = "none";
+  $("thread").appendChild(await turnEl(user));
+  const live = { role: "assistant", content: "", progress: [], artifacts: [], error: "" };
+  const el = document.createElement("div"); el.className = "turn assistant"; el.innerHTML = assistantHTML(live, true);
+  $("thread").appendChild(el); scrollDown();
+  setRunning(true);
+  try {
+    const r = await api(`/api/conversations/${state.conv.id}/messages`, { method: "POST", json: { text, attachments: refs } });
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1); if (!line.trim()) continue;
+        const ev = JSON.parse(line);
+        if (ev.type === "progress") { live.progress.push(ev.text); if (ev.data && ev.data.job) state.jobId = ev.data.job; }
+        else if (ev.type === "text") live.content += ev.text;
+        else if (ev.type === "artifacts") { live.artifacts.push(...ev.data.refs); ev.data.refs.forEach((x) => artCache.delete(x)); }
+        else if (ev.type === "error") live.error = ev.text;
+        else if (ev.type === "done") state.conv.title = ev.title;
+        const cards = el.querySelector(".cards").innerHTML;
+        el.innerHTML = assistantHTML(live, ev.type !== "done");
+        if (ev.type === "artifacts") await fillCards(el, live.artifacts); else el.querySelector(".cards").innerHTML = cards;
+        scrollDown();
+      }
+    }
+  } catch (e) { live.error = e.message; el.innerHTML = assistantHTML(live, false); }
+  el.innerHTML = assistantHTML(live, false); await fillCards(el, live.artifacts);
+  state.conv.turns.push(live); $("title").textContent = state.conv.title;
+  setRunning(false); loadConvs(); refreshStatus();
+}
+function setRunning(on) {
+  state.running = on; if (!on) state.jobId = null;
+  const b = $("send"); b.textContent = on ? "■" : "↑"; b.title = on ? "生成を停止" : "送信（Enter）"; b.setAttribute("aria-label", b.title);
+  $("dot").className = "dot" + (on ? " busy" : "");
+}
+async function stop() {
+  if (!state.jobId) { toast("いまは止められる生成がありません（対話の返答は止められません）"); return; }
+  await api(`/api/jobs/${state.jobId}/cancel`, { method: "POST" }); toast("停止を依頼しました");
+}
+
+/* ---------- 添付 ---------- */
+async function renderChips() { $("chips").innerHTML = (await Promise.all(state.attachments.map((r) => chipHTML(r, true)))).join(""); }
+async function uploadFiles(files) {
+  for (const f of files) {
+    const fd = new FormData(); fd.append("file", f);
+    try { const a = await (await api("/api/upload", { method: "POST", body: fd })).json(); artCache.set(a.ref, a); state.attachments.push(a.ref); }
+    catch (e) { toast(`${f.name}：${e.message}`); }
+  }
+  renderChips();
+}
+function autosize() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(240, t.scrollHeight) + "px"; }
+
+/* ---------- 操作 ---------- */
+function closeSideMobile() { $("app").classList.remove("side-open"); }
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("[data-art],[data-use],[data-drop],[data-conv],[data-del],[data-env],[data-filter]");
+  if (!t) return;
+  if (t.dataset.del) { ev.stopPropagation();
+    if (await confirmBox("会話を削除しますか？", "会話の記録だけを消します。作った画像・音声・動画は成果物ライブラリに残ります。", "削除")) {
+      await api(`/api/conversations/${t.dataset.del}`, { method: "DELETE" }); if (state.conv && state.conv.id === t.dataset.del) newChat(); loadConvs(); }
+    return; }
+  if (t.dataset.art) return openArtifact(t.dataset.art);
+  if (t.dataset.use) { if (!state.attachments.includes(t.dataset.use)) state.attachments.push(t.dataset.use); renderChips(); toast("添付しました"); return; }
+  if (t.dataset.drop) { state.attachments = state.attachments.filter((r) => r !== t.dataset.drop); renderChips(); return; }
+  if (t.dataset.conv) return openConv(t.dataset.conv);
+  if (t.dataset.env) { if (await switchEnv(t.dataset.env)) newChat(); return; }
+  if (t.dataset.filter !== undefined) { state.libFilter = t.dataset.filter; openLibrary(); }
+});
+$("envPick").onchange = async (e) => { if (await switchEnv(e.target.value)) newChat(); };
+$("newChat").onclick = newChat;
+$("openLibrary").onclick = () => { openLibrary(); closeSideMobile(); };
+$("closePanel").onclick = () => $("panel").classList.remove("open");
+$("attach").onclick = () => $("file").click();
+$("file").onchange = async () => { await uploadFiles([...$("file").files]); $("file").value = ""; };
+$("send").onclick = () => (state.running ? stop() : send());
+$("input").addEventListener("input", autosize);
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+$("menuBtn").onclick = () => $("app").classList.toggle("side-open");
+$("hideSide").onclick = () => { $("app").classList.add("side-hidden"); $("showSide").hidden = false; };
+$("showSide").onclick = () => { $("app").classList.remove("side-hidden"); $("showSide").hidden = true; };
+$("modal").onclick = (e) => { if (e.target === $("modal") && state.key) closeDialog(); };
+const comp = document.querySelector(".composer");
+comp.addEventListener("dragover", (e) => { e.preventDefault(); comp.style.borderColor = "var(--accent)"; });
+comp.addEventListener("dragleave", () => (comp.style.borderColor = ""));
+comp.addEventListener("drop", (e) => { e.preventDefault(); comp.style.borderColor = ""; uploadFiles([...e.dataTransfer.files]); });
+document.addEventListener("paste", (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) uploadFiles(fs); });
+
+async function boot() {
+  await refreshStatus(); await loadConvs(); renderThread();
+}
+const qs = new URLSearchParams(location.search);
+if (qs.get("key")) { store("lao-key", qs.get("key")); history.replaceState(null, "", "/"); }
+state.key = store("lao-key") || "";
+if (!state.key) askKey(); else boot();
+setInterval(refreshStatus, 4000);
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+</script>
+</body>
+</html>
