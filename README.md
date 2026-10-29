@@ -9,7 +9,7 @@ RTX Spark（128GB 統合メモリ、Windows 11 on Arm）1台で、四つの目�
 | E3 音声生成 | 参考音声の話し方で日本語の文章を読み上げる |
 | E4 動画生成 | 画像を元に短い動画を作る（音声つき構成あり） |
 
-企画と前提は [docs/plan.md](docs/plan.md)、実機入手前の準備は [docs/prep.md](docs/prep.md) にあります。
+企画と前提は [docs/plan.md](docs/plan.md)、実機入手前の準備は [docs/prep.md](docs/prep.md)、届いた後の手順は [docs/arrival.md](docs/arrival.md) にあります。
 
 ## 方針
 
@@ -21,7 +21,7 @@ RTX Spark（128GB 統合メモリ、Windows 11 on Arm）1台で、四つの目�
 
 ## 実機が届いたらやること
 
-コードは揃っています。実機では「検証して、設定値を埋める」だけです。**ユーザーの「開始」指示があるまで、以下は実行しません。**
+コードは揃っています。実機では「検証して、設定値を埋める」だけです。開封から、画面を閉じたままメイン PC の Claude Code で使えるようになるまでの通しの手順は [docs/arrival.md](docs/arrival.md) にあります。**ユーザーの「開始」指示があるまで、以下は実行しません。**
 
 1. **導入（確認モードで内容を見てから実行）**
    - ネイティブ：`powershell -ExecutionPolicy Bypass -File scripts\install-native.ps1` → 内容を確認 → `-Execute` を付けて実行
