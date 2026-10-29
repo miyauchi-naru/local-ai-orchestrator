@@ -71,6 +71,14 @@ class FakeLlama:
         skill = re.search(r"^- (\S+)：", system, re.M) if "スキル" in user else None
         if skill and "use_skill" in names:
             return _call("use_skill", {"name": skill.group(1)})
+        fmt = next((f for k, f in (("Word", "docx"), ("Excel", "xlsx"), ("スライド", "pptx"), ("PDF", "pdf"))
+                    if k in user), None)
+        if fmt and "create_file" in names:
+            body = "# 見出し\n- 項目\n---\n# 次\n- 項目" if fmt == "pptx" else "# 見出し\n本文\n| a | b |\n|---|---|\n| 1 | 2 |"
+            args = {"format": fmt, "title": "ダミー資料", "content": body}
+            if refs and "直して" in user:
+                args["parent"] = refs[-1]
+            return _call("create_file", args)
         if "動画" in user and "generate_video" in names and refs:
             return _call("generate_video", {"image_ref": refs[-1], "prompt": "a gentle camera pan", "seconds": 2})
         if "画像" in user and "generate_image" in names:

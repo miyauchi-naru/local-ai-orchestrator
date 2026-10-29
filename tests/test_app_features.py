@@ -211,3 +211,18 @@ def test_library_text_and_speak(client):
     client.post("/api/environment", json={"env": "e3"})
     job = client.post("/api/speak", json={"text": "こんにちは"}).json()["job"]
     assert client.get(f"/api/jobs/{job}").status_code == 200
+
+
+def test_create_office_file_in_conversation(client):
+    cid = _conv(client)
+    events = _send(client, cid, text="Wordで報告書を作って")
+    refs = [r for e in events if e["type"] == "artifacts" for r in e["data"]["refs"]]
+    assert len(refs) == 1
+    item = next(i for i in client.get("/api/library").json()["items"] if i["ref"] == refs[0])
+    assert item["filename"].endswith(".docx") and item["title"] == "ダミー資料.docx"
+    assert "見出し" in client.get(f"/api/preview/{refs[0]}").json()["text"]
+    # 直すと同じ成果物の新しい版になる
+    events = _send(client, cid, text=f"{refs[0]} を直して、PDFで")
+    new = [r for e in events if e["type"] == "artifacts" for r in e["data"]["refs"]]
+    assert new and new[0].split("@")[0] == refs[0].split("@")[0] and new[0] != refs[0]
+    assert client.get("/api/preview/000000000000@1").status_code == 404

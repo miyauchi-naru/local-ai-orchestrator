@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import random
 import shutil
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -86,6 +88,21 @@ REMEMBER_SCHEMA = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "text": {"type": "string", "description": "覚える内容（一文）"}},
         "required": ["text"], "additionalProperties": False}}}
+
+
+CREATE_FILE_SCHEMA = {"type": "function", "function": {
+    "name": "create_file",
+    "description": "Word（docx）・Excel（xlsx）・PowerPoint（pptx）・PDF のファイルを作る。中身は Markdown で書く。"
+                   "docx/pdf：# 見出し、- 箇条書き、1. 番号、| 表 |、> 引用、**太字**。"
+                   "xlsx：## シート名 でシートを分け、| 表 | で行を書く（= で始まるセルは式）。"
+                   "pptx：--- の行でスライドを分け、各スライドは # 題 と箇条書き、「ノート：」以降は発表者ノート。"
+                   "前に作ったファイルを直すときは、全体を書き直して parent にその id@版 を入れる（新しい版になる）。",
+    "parameters": {"type": "object", "properties": {
+        "format": {"type": "string", "enum": ["docx", "xlsx", "pptx", "pdf"]},
+        "title": {"type": "string", "description": "ファイルの題"},
+        "content": {"type": "string", "description": "中身（Markdown）"},
+        "parent": {"type": "string", "description": "直す元のファイル（id@版）。新しく作るときは省く"}},
+        "required": ["format", "title", "content"], "additionalProperties": False}}}
 
 
 def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: TurnContext | None = None,
@@ -163,6 +180,7 @@ class Orchestrator:
 
     def _build(self, messages: list[dict], attachments: list[str], tc: TurnContext, depth: int):
         tools = [t.schema() for t in tools_for(self.rt.conf)]
+        tools.append(CREATE_FILE_SCHEMA)
         if tc.skills:
             tools.append(use_skill_schema(tc.skills))
         if depth == 0:
@@ -233,6 +251,13 @@ class Orchestrator:
                     result = self._use_skill(raw, tc.skills)
                     yield Event("progress", f"スキル「{result['skill']}」を読み込みました" if result.get("ok")
                                 else f"スキルを読み込めませんでした：{result['error']}")
+                elif name == "create_file":
+                    result = self._create_file(_args(raw))
+                    if result["ok"]:
+                        yield Event("progress", f"{result['title']}（{result['format']}）を作りました")
+                        yield Event("artifacts", data={"refs": result["artifacts"]})
+                    else:
+                        yield Event("progress", f"ファイルを作れませんでした：{result['error']}")
                 elif name == "remember" and depth == 0 and tc.allow_remember:
                     text = str(_args(raw).get("text") or "").strip()[:500]
                     if text:
@@ -289,6 +314,25 @@ class Orchestrator:
                 sub_err = ev.text
         result.update({"ok": not sub_err, "result": "".join(sub_text), "artifacts": sub_refs, "error": sub_err})
         yield Event("progress", f"{who}の作業が終わりました" if not sub_err else f"{who}が止まりました：{sub_err}")
+
+    def _create_file(self, a: dict) -> dict:
+        from .office import OfficeError, render
+        fmt = str(a.get("format", "")).lower().lstrip(".")
+        title = str(a.get("title") or "").strip()[:100] or "文書"
+        parent = a.get("parent") or None
+        try:
+            if parent:
+                self.library.get(str(parent))
+            data = render(fmt, title, str(a.get("content") or ""))
+        except (OfficeError, KeyError, ValueError) as e:
+            return {"ok": False, "error": str(e) or "parent の成果物がありません"}
+        tmp = self.library.root / f".tmp-{uuid.uuid4().hex}.{fmt}"
+        tmp.write_bytes(data)
+        safe = re.sub(r'[\\/:*?"<>|]', "_", title)
+        art = self.library.add_file(tmp, move=True, env_id=self.rt.env.id, configuration=self.rt.conf.id,
+                                    title=f"{safe}.{fmt}", parent=str(parent) if parent else None,
+                                    generation={"tool": "create_file", "format": fmt})
+        return {"ok": True, "title": title, "format": fmt, "artifacts": [art.ref]}
 
     @staticmethod
     def _use_skill(raw: str | dict, skills: list[SkillRef]) -> dict:
