@@ -27,12 +27,16 @@ async def run(orch, text, attachments=None):
     return events
 
 
+def text_of(events):
+    return "".join(e.text for e in events if e.type == "text")
+
+
 async def test_e2_generate_then_edit_creates_new_version(tmp_path, machine, catalog, catalog_dir):
     rt, lib, orch = make(tmp_path, machine, catalog, catalog_dir, "e2", "e2-standard")
     ev = await run(orch, "猫の画像を作って")
     refs = [r for e in ev if e.type == "artifacts" for r in e.data["refs"]]
     assert len(refs) == 1 and lib.get(refs[0]).kind == "image"
-    assert ev[-1].type == "text" and refs[0] in ev[-1].text
+    assert ev[-1].type == "text" and refs[0] in text_of(ev)
     # 修正
     out = []
     async for e in orch.respond([{"role": "user", "content": "もっと明るく"}], [refs[0]]):
@@ -75,7 +79,7 @@ async def test_e4_image_to_video_reports_silent_and_length(tmp_path, machine, ca
     art = lib.get(refs[0])
     assert art.kind == "video" and art.sources == [img.ref]
     assert art.generation["has_audio"] is False
-    assert "音声はありません" in ev[-1].text
+    assert "音声はありません" in text_of(ev)
 
 
 async def test_out_of_environment_tool_rejected(tmp_path, machine, catalog, catalog_dir):

@@ -106,8 +106,8 @@ class Library:
         )
         return art
 
-    def add_text(self, text: str, **kw) -> Artifact:
-        tmp = self.root / f".tmp-{uuid.uuid4().hex}.md"
+    def add_text(self, text: str, suffix: str = ".md", **kw) -> Artifact:
+        tmp = self.root / f".tmp-{uuid.uuid4().hex}{suffix}"
         tmp.write_text(text, encoding="utf-8")
         return self.add_file(tmp, move=True, **kw)
 

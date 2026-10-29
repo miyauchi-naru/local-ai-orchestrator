@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from .conversations import ConversationStore
@@ -10,8 +11,20 @@ from .jobs import TERMINAL, JobManager
 from .library import Library
 from .lock import InferenceLock
 from .media import Media
-from .orchestrator import Orchestrator
+from .orchestrator import Orchestrator, SkillRef
+from .plugins import CommandStore, PluginStore
+from .projects import ProjectStore
+from .skills import SkillStore
 from .runtime import Runtime, default_engine_factory
+
+
+STYLES = {
+    "standard": "",
+    "concise": "要点だけを短く答えてください。",
+    "detailed": "背景や理由も含めて詳しく、順を追って説明してください。",
+    "formal": "丁寧な文体で、仕事の文書に使える形で答えてください。",
+}
+DEFAULT_SETTINGS = {"about_me": "", "style": "standard", "max_tokens": 2048}
 
 
 class Service:
@@ -22,6 +35,11 @@ class Service:
         root = machine.path_of("root")
         self.library = Library(machine.path_of("library"))
         self.conversations = ConversationStore(root / "conversations")
+        self.projects = ProjectStore(root / "projects")
+        self.skills = SkillStore(root / "skills")
+        self.commands = CommandStore(root / "commands")
+        self.plugins = PluginStore(root / "plugins")
+        self.settings_path = root / "settings.json"
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
         self.media = Media(ff.get("binary", "ffmpeg"), ff.get("ffprobe", "ffprobe"))
@@ -48,6 +66,77 @@ class Service:
                 })
             out.append({"id": env.id, "name": env.name, "configurations": confs})
         return out
+
+    # ------------------------------------------------------------ 設定・スキル・コマンド
+    def settings(self) -> dict:
+        d = dict(DEFAULT_SETTINGS)
+        try:
+            d.update(json.loads(self.settings_path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            pass
+        return d
+
+    def save_settings(self, patch: dict) -> dict:
+        d = self.settings()
+        for k, v in patch.items():
+            if k not in DEFAULT_SETTINGS:
+                continue
+            if k == "style" and v not in STYLES:
+                raise ValueError(f"style は {list(STYLES)} のいずれかです")
+            if k == "max_tokens":
+                v = int(v)
+                if not 256 <= v <= 32768:
+                    raise ValueError("max_tokens は 256〜32768 です")
+            if k == "about_me":
+                v = str(v)[:4000]
+            d[k] = v
+        self.settings_path.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+        return d
+
+    def active_skills(self) -> list[SkillRef]:
+        out = [SkillRef(s.name, s.description, s.body) for s in self.skills.enabled()]
+        for p in self.plugins.list():
+            if p.enabled:
+                out += [SkillRef(f"{p.name}:{s.name}", s.description, s.body) for s in p.skills if s.enabled]
+        return out
+
+    def all_commands(self) -> list:
+        out = list(self.commands.list())
+        for p in self.plugins.list():
+            if p.enabled:
+                out += p.commands
+        return out
+
+    def expand_command(self, text: str) -> tuple[str, str | None]:
+        """先頭が /コマンド なら依頼文に置き換える。返り値は（本文、使ったコマンド名）。"""
+        if not text.startswith("/"):
+            return text, None
+        head, _, rest = text[1:].partition(" ")
+        head, _, rest2 = head.partition("\n")
+        rest = (rest2 + " " + rest).strip() if rest2 else rest
+        for c in self.all_commands():
+            if c.full_name == head or (c.name == head and not c.plugin):
+                return c.expand(rest), c.full_name
+        for c in self.all_commands():
+            if c.name == head:
+                return c.expand(rest), c.full_name
+        return text, None
+
+    def instructions_for(self, project_id: str = "") -> str:
+        st = self.settings()
+        parts = []
+        if st.get("about_me", "").strip():
+            parts.append("利用者について：" + st["about_me"].strip())
+        if STYLES.get(st.get("style", "")):
+            parts.append("応答スタイル：" + STYLES[st["style"]])
+        if project_id:
+            try:
+                p = self.projects.get(project_id)
+            except KeyError:
+                p = None
+            if p:
+                parts.append(f"プロジェクト「{p.name}」の指示：" + (p.instructions.strip() or "（なし）"))
+        return "\n".join(parts)
 
     def busy(self) -> bool:
         return any(j.state not in TERMINAL for j in self.jobs.list())

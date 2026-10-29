@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -122,6 +123,64 @@ class LlamaServer:
             if not self.running:
                 raise EngineError(f"{self.name} が異常終了しました（ログ：{self.proc and self.proc.log_path}）")
             raise
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        max_tokens: int = 2048,
+    ) -> AsyncIterator[dict]:
+        """返答を少しずつ返す。{"content": 差分} / {"reasoning": 差分} を流し、最後に {"message": 全体}。
+
+        ウォッチドッグは「次の差分が届くまでの時間」に掛ける（長い返答でも止まっていなければ続ける）。
+        """
+        if not self.running:
+            raise EngineError(f"{self.name} がロードされていません")
+        body: dict[str, Any] = {"messages": messages, "max_tokens": max_tokens, "stream": True}
+        if tools:
+            body["tools"] = tools
+        content, reasoning, calls = [], [], {}
+        try:
+            async with self._client.stream("POST", "/v1/chat/completions", json=body) as r:
+                if r.status_code >= 400:
+                    raise EngineError(f"{self.name}: HTTP {r.status_code} {(await r.aread())[:500]!r}")
+                lines = r.aiter_lines()
+                while True:
+                    try:
+                        line = await with_watchdog(lines.__anext__(), self.watchdog_seconds, f"{self.name} の推論")
+                    except StopAsyncIteration:
+                        break
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    choices = json.loads(data).get("choices") or [{}]
+                    delta = choices[0].get("delta") or {}
+                    if delta.get("reasoning_content"):
+                        reasoning.append(delta["reasoning_content"])
+                        yield {"reasoning": delta["reasoning_content"]}
+                    if delta.get("content"):
+                        content.append(delta["content"])
+                        yield {"content": delta["content"]}
+                    for tc in delta.get("tool_calls") or []:
+                        c = calls.setdefault(tc.get("index", 0), {"id": "", "type": "function",
+                                                                 "function": {"name": "", "arguments": ""}})
+                        c["id"] = tc.get("id") or c["id"]
+                        fn = tc.get("function") or {}
+                        c["function"]["name"] += fn.get("name") or ""
+                        c["function"]["arguments"] += fn.get("arguments") or ""
+        except EngineError:
+            if not self.running:
+                raise EngineError(f"{self.name} が異常終了しました（ログ：{self.proc and self.proc.log_path}）")
+            raise
+        msg: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+        if reasoning:
+            msg["reasoning_content"] = "".join(reasoning)
+        if calls:
+            msg["tool_calls"] = [calls[i] for i in sorted(calls)]
+        yield {"message": msg}
 
     async def close(self) -> None:
         await self._client.aclose()

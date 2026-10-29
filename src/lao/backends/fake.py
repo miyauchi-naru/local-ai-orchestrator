@@ -43,6 +43,10 @@ class FakeLlama:
         last = messages[-1]
         if last["role"] == "tool":
             res = json.loads(last["content"])
+            if "result" in res:
+                return _msg(f"サブエージェントの結果：{res['result'][:200]}")
+            if res.get("skill"):
+                return _msg(f"スキル「{res['skill']}」の手順に従って答えます。")
             if res.get("ok"):
                 text = f"できました：{', '.join(res.get('artifacts', []))}"
                 if res.get("output"):
@@ -58,6 +62,11 @@ class FakeLlama:
         user = _text(last)
         system = messages[0]["content"]
         refs = REF.findall(user) or REF.findall(system)
+        if "任せて" in user and "delegate_task" in names:
+            return _call("delegate_task", {"task": user[:200]})
+        skill = re.search(r"^- (\S+)：", system, re.M) if "スキル" in user else None
+        if skill and "use_skill" in names:
+            return _call("use_skill", {"name": skill.group(1)})
         if "動画" in user and "generate_video" in names and refs:
             return _call("generate_video", {"image_ref": refs[-1], "prompt": "a gentle camera pan", "seconds": 2})
         if "画像" in user and "generate_image" in names:
@@ -67,6 +76,18 @@ class FakeLlama:
         if refs and "describe_media" in names:
             return _call("describe_media", {"ref": refs[-1], "question": user or "内容を説明して"})
         return _msg(f"（ダミー応答）{user[:200]}")
+
+
+    async def chat_stream(self, messages, *, tools=None, max_tokens=2048):
+        msg = (await self.chat(messages, tools=tools, max_tokens=max_tokens))["choices"][0]["message"]
+        if "考えて" in _text(messages[-1]):
+            msg["reasoning_content"] = "（ダミー思考）順に考えます。"
+            yield {"reasoning": msg["reasoning_content"]}
+        text = msg.get("content") or ""
+        for i in range(0, len(text), 8):
+            await asyncio.sleep(self.delay / 20)
+            yield {"content": text[i:i + 8]}
+        yield {"message": msg}
 
 
 def _text(m: dict) -> str:
