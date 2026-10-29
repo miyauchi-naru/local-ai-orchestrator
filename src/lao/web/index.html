@@ -199,6 +199,8 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5p
 .preview img, .preview video { width: 100%; border-radius: 10px; background: var(--hover); }
 .preview audio { width: 100%; }
 .preview pre { white-space: pre-wrap; font-size: 13px; }
+.aibar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+[hidden] { display: none !important; }
 .preview iframe { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #fff; flex: 1; min-height: 420px; }
 .preview .doc { font-size: 15px; }
 .editor { width: 100%; flex: 1; min-height: 360px; font: 13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--bg); resize: vertical; }
@@ -418,14 +420,14 @@ function md(src, live) {
   });
   return html;
 }
-const PREVIEWABLE = { html: "HTML", htm: "HTML", svg: "SVG", markdown: "文書", md: "文書" };
-const EXT = { html: ".html", htm: ".html", svg: ".svg", markdown: ".md", md: ".md", python: ".py", py: ".py", javascript: ".js", js: ".js", typescript: ".ts", ts: ".ts", css: ".css", json: ".json", csv: ".csv", powershell: ".ps1", ps1: ".ps1", bash: ".sh", sh: ".sh", sql: ".sql", yaml: ".yaml", toml: ".toml", xml: ".xml" };
+const PREVIEWABLE = { html: "HTML", htm: "HTML", svg: "SVG", markdown: "文書", md: "文書", jsx: "React", tsx: "React", react: "React", mermaid: "図", mmd: "図" };
+const EXT = { html: ".html", htm: ".html", svg: ".svg", markdown: ".md", md: ".md", python: ".py", py: ".py", javascript: ".js", js: ".js", typescript: ".ts", ts: ".ts", css: ".css", json: ".json", csv: ".csv", powershell: ".ps1", ps1: ".ps1", bash: ".sh", sh: ".sh", sql: ".sql", yaml: ".yaml", toml: ".toml", xml: ".xml", jsx: ".jsx", tsx: ".tsx", react: ".jsx", mermaid: ".mmd", mmd: ".mmd" };
 function codeHTML(id, lang, code, closed) {
   const isSkill = /^---\s*\nname:\s*[a-z0-9-]+/m.test(code) && /description:/.test(code);
   const lines = code.split("\n").length;
   if (closed && (PREVIEWABLE[lang] || (lines > 18 && EXT[lang]))) {
     const label = PREVIEWABLE[lang] || "コード";
-    return `<button class="artline" data-code="${id}"><span class="ico">${esc((lang || "txt").slice(0, 4).toUpperCase())}</span><span><b>${esc(guessTitle(lang, code))}</b><span class="small muted">${label}・${lines} 行・クリックで右に表示</span></span></button>`
+    return `<button class="artline" data-code="${id}"><span class="ico">${esc(({ mermaid: "図", mmd: "図", react: "JSX" }[lang] || lang || "txt").slice(0, 4).toUpperCase())}</span><span><b>${esc(guessTitle(lang, code))}</b><span class="small muted">${label}・${lines} 行・クリックで右に表示</span></span></button>`
       + (isSkill ? `<div class="actions" style="margin:-4px 0 12px"><button class="btn" data-skillsave="${id}">スキルとして保存</button></div>` : "");
   }
   return `<div class="codeblock"><div class="codehead"><span class="lang">${esc(lang || "text")}</span>
@@ -435,7 +437,7 @@ function codeHTML(id, lang, code, closed) {
 }
 function guessTitle(lang, code) {
   const t = code.match(/<title>([^<]{1,60})<\/title>/i) || code.match(/^#\s+(.{1,60})$/m) || code.match(/^name:\s*(.+)$/m);
-  return t ? t[1].trim() : ({ html: "HTML ページ", svg: "SVG 図", md: "文書", markdown: "文書" }[lang] || `${lang || "テキスト"} のコード`);
+  return t ? t[1].trim() : ({ html: "HTML ページ", svg: "SVG 図", md: "文書", markdown: "文書", jsx: "React の画面", tsx: "React の画面", react: "React の画面", mermaid: "図", mmd: "図" }[lang] || `${lang || "テキスト"} のコード`);
 }
 function blockMd(b) {
   let html = ""; const lines = b.split("\n"); let list = null, para = [], table = null, quote = [];
@@ -497,19 +499,105 @@ async function chipHTML(ref, removable) {
   const icon = a && a.kind === "image" ? `<img src="${fileUrl(ref)}" alt="">` : `<span class="k">${a ? KIND[a.kind].slice(0, 2) : "?"}</span>`;
   return `<span class="chip">${icon}${esc(a ? a.title : ref)}${removable ? `<button data-drop="${esc(ref)}" aria-label="外す">✕</button>` : ""}</span>`;
 }
-const CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; form-action 'none'">`;
-const REPORTER = `<script>addEventListener("error",function(e){parent.postMessage({laoArtifactError:String(e.message)+(e.lineno?" (行 "+e.lineno+")":"")},"*")});<\/script>`;
+// 部品（React・グラフなど）は、このサーバーの /vendor/ にあるものだけを読み込める。外への通信はできない
+const CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' ${location.origin}/vendor/; font-src data:; form-action 'none'">`;
+const REPORTER = `<script>addEventListener("error",function(e){parent.postMessage({laoArtifactError:String(e.message)+(e.lineno?" (行 "+e.lineno+")":"")},"*")});
+addEventListener("unhandledrejection",function(e){parent.postMessage({laoArtifactError:String(e.reason&&e.reason.message||e.reason)},"*")});
+window.claude={complete:function(p){return new Promise(function(ok,ng){var id=Math.random().toString(36).slice(2);
+function on(e){var d=e.data&&e.data.laoCompleteResult;if(!d||d.id!==id)return;removeEventListener("message",on);d.error?ng(new Error(d.error)):ok(d.text)}
+addEventListener("message",on);parent.postMessage({laoComplete:{id:id,prompt:p}},"*")})}};<\/script>`;
 function sandboxed(html) {
   // 外部への通信・遷移・ポップアップを封じた箱の中で表示する
   return `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${esc(CSP + REPORTER + html)}"></iframe>`;
 }
+const VENDOR = { react: "react.js", "react-dom": "react-dom.js", "react-dom/client": "react-dom.js", "prop-types": "prop-types.js", recharts: "recharts.js",
+  "lucide-react": "lucide-react.js", "chart.js": "chart.js", "chart.js/auto": "chart.js", d3: "d3.js", mermaid: "mermaid.js", three: "three.js",
+  papaparse: "papaparse.js", lodash: "lodash.js", "lodash.js": "lodash.js", "@babel/standalone": "babel.js", "babel-standalone": "babel.js",
+  "@tailwindcss/browser": "tailwind.js" };
+const GLOBALS = { react: "React", "react-dom": "ReactDOM", "react-dom/client": "ReactDOM", "prop-types": "PropTypes", recharts: "Recharts",
+  "lucide-react": "LucideReact", "chart.js": "Chart", "chart.js/auto": "Chart", d3: "d3", three: "THREE", papaparse: "Papa", lodash: "_" };
+const NEEDS = { recharts: ["prop-types.js", "react-dom.js"], "lucide-react": [] };
+const vsrc = (f) => `<script src="/vendor/${f}"><\/script>`;
+function localizeHtml(html) {
+  // CDN の読み込みを、手元に置いた同じ部品に置き換える（無いものはそのまま。CSP で止まる）
+  return html.replace(/<script\b[^>]*>/gi, (tag) => tag.replace(/\ssrc=["']https:\/\/(?:cdn\.tailwindcss\.com[^"']*|(?:cdn\.jsdelivr\.net\/npm|unpkg\.com|cdnjs\.cloudflare\.com\/ajax\/libs)\/((?:@[\w.-]+\/)?[\w.-]+?)(?:@[^/"']*)?\/[^"']*)["']/i,
+    (m, pkg) => { const f = pkg ? VENDOR[pkg] : "tailwind.js"; return f ? ` src="/vendor/${f}"` : m; }))
+    .replace(/<script\b[^>]*src="\/vendor\/[^>]*>/g, (tag) => tag.replace(/\s(integrity|crossorigin)(=["'][^"']*["'])?/gi, ""));
+}
+function mermaidDoc(code) {
+  return `<!doctype html><meta charset="utf-8"><body style="margin:16px;background:#fff">${vsrc("mermaid.js")}<pre class="mermaid">${esc(code)}</pre>
+<script>mermaid.initialize({startOnLoad:false,securityLevel:"strict"});mermaid.run().catch(function(e){parent.postMessage({laoArtifactError:String(e&&e.message||e)},"*")});<\/script>`;
+}
+function reactDoc(code, ts) {
+  // import を、手元の部品の window 上の名前に置き換えてから、JSX を画面の中で変換して表示する
+  const libs = new Set(["react.js", "react-dom.js"]);
+  const body = code.replace(/^\s*import\s+(?:([\w$]+)\s*,?\s*)?(?:\*\s+as\s+([\w$]+)\s*)?(?:\{([^}]*)\}\s*)?from\s+["']([^"']+)["'];?/gm, (m, def, star, named, mod) => {
+    const g = GLOBALS[mod];
+    if (!g) return /\.css$/.test(mod) ? "" : `throw new Error("この部品は使えません：${mod.replace(/"/g, "")}");`;
+    libs.add(VENDOR[mod]); (NEEDS[mod] || []).forEach((x) => libs.add(x));
+    let out = "";
+    if (def) out += `const ${def} = (window.${g} && window.${g}.default) || window.${g};`;
+    if (star) out += `const ${star} = window.${g};`;
+    if (named) out += `const {${named.replace(/\btype\s+/g, "").replace(/([\w$]+)\s+as\s+([\w$]+)/g, "$1: $2")}} = window.${g};`;
+    return out;
+  }).replace(/^\s*import\s+["'][^"']+["'];?/gm, "")
+    .replace(/export\s+default\s+function\s*([\w$]*)/, (m, n) => `window.__laoApp = function ${n || "App"}`)
+    .replace(/export\s+default\s+class\s+([\w$]+)/, "window.__laoApp = class $1")
+    .replace(/export\s+default\s+/, "window.__laoApp = ")
+    .replace(/^export\s+(?=(const|let|function|class)\s)/gm, "");
+  const order = ["react.js", "react-dom.js", "prop-types.js", ...[...libs].filter((x) => !["react.js", "react-dom.js", "prop-types.js"].includes(x))];
+  const src = JSON.stringify(body).replace(/</g, "\\u003c");
+  // UMD 版の lucide-react などは小文字の window.react を見る
+  const alias = `<script>window.react = window.React; window["react-dom"] = window.ReactDOM;<\/script>`;
+  return `<!doctype html><meta charset="utf-8"><body style="margin:0;background:#fff">${order.filter((x) => libs.has(x)).map((x, i) => vsrc(x) + (i === 1 ? alias : "")).join("")}${vsrc("tailwind.js")}${vsrc("babel.js")}
+<div id="root"></div><script>
+try {
+  var out = Babel.transform(${src}, { presets: ${ts ? '[["typescript", { isTSX: true, allExtensions: true }], "react"]' : '["react"]'}, filename: "App.${ts ? "tsx" : "jsx"}" }).code;
+  var s = document.createElement("script"); s.textContent = out + "\\n;window.__laoReady && window.__laoReady();";
+  window.__laoReady = function () { if (!window.__laoApp) throw new Error("export default の部品がありません");
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(window.__laoApp)); };
+  document.body.appendChild(s);
+} catch (e) { parent.postMessage({ laoArtifactError: String(e && e.message || e) }, "*"); }
+<\/script>`;
+}
+function previewDoc(lang, code) {
+  if (lang === "mermaid" || lang === "mmd") return mermaidDoc(code);
+  if (["jsx", "tsx", "react"].includes(lang)) return reactDoc(code, lang === "tsx");
+  return localizeHtml(code);
+}
 let artifactError = "";
 addEventListener("message", (e) => { if (e.data && e.data.laoArtifactError) { artifactError = e.data.laoArtifactError; const b = $("fixErr"); if (b) b.hidden = false; } });
+
+/* 成果物から AI への問い合わせ（window.claude.complete）。表示中の成果物から、利用者が許可したときだけ */
+let aiGate = { spec: null, waiting: [] };
+addEventListener("message", (e) => {
+  const req = e.data && e.data.laoComplete; if (!req) return;
+  const fr = $("panelBody").querySelector("iframe");
+  if (!fr || e.source !== fr.contentWindow || !aiGate.spec) return;
+  const reply = (r) => { try { e.source.postMessage({ laoCompleteResult: { id: req.id, ...r } }, "*"); } catch (_) {} };
+  const run = async () => {
+    const p = req.prompt; const body = Array.isArray(p) ? { messages: p } : { prompt: String(p ?? "") };
+    $("aiUse").hidden = false;
+    try { reply({ text: (await getJSON("/api/complete", { method: "POST", json: body })).text }); }
+    catch (err) { reply({ error: err.message }); }
+    finally { $("aiUse").hidden = true; }
+  };
+  if (aiGate.spec.ai === "yes") return run();
+  if (aiGate.spec.ai === "no") return reply({ error: "利用者が AI の利用を許可しませんでした" });
+  aiGate.waiting.push(run, reply); $("aiAsk").hidden = false;
+});
+function aiDecide(ok) {
+  aiGate.spec.ai = ok ? "yes" : "no"; $("aiAsk").hidden = true;
+  const w = aiGate.waiting; aiGate.waiting = [];
+  for (let i = 0; i < w.length; i += 2) ok ? w[i]() : w[i + 1]({ error: "利用者が AI の利用を許可しませんでした" });
+}
 
 /* 右パネル：コードブロック・文書の表示と編集 */
 async function openCode(spec) {
   // spec: { lang, code, title, ref? }
   artifactError = "";
+  aiGate.waiting.forEach((f, i) => i % 2 && f({ error: "成果物が閉じられました" }));
+  aiGate = { spec, waiting: [] };
   const lang = spec.lang; const canPreview = !!PREVIEWABLE[lang];
   $("panelTitle").textContent = spec.title || guessTitle(lang, spec.code);
   let mode = canPreview ? "preview" : "code";
@@ -519,7 +607,10 @@ async function openCode(spec) {
     if (mode === "preview") {
       if (lang === "svg") body = `<div class="preview"><img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(spec.code)}"></div>`;
       else if (lang === "md" || lang === "markdown") body = `<div class="preview"><div class="doc assistant"><div class="body" id="docBody">${md(spec.code)}</div></div></div>`;
-      else body = `<div class="preview" style="display:flex;flex-direction:column;flex:1">${sandboxed(spec.code)}</div>`;
+      else body = `<div class="aibar" id="aiAsk" hidden>この成果物が AI に問い合わせようとしています（この PC の中だけで動きます）。
+          <button class="btn primary" id="aiYes">許可する</button><button class="btn" id="aiNo">断る</button></div>
+        <div class="aibar muted" id="aiUse" hidden>AI に問い合わせています…</div>
+        <div class="preview" style="display:flex;flex-direction:column;flex:1">${sandboxed(previewDoc(lang, spec.code))}</div>`;
     } else body = `<textarea class="editor" id="codeEdit" spellcheck="false">${esc(spec.code)}</textarea>`;
     $("panelBody").innerHTML = body + `<div class="actions" style="margin-top:10px">
       <button class="btn" id="pCopy">コピー</button>
@@ -539,6 +630,7 @@ async function openCode(spec) {
     };
     $("fixErr").onclick = () => { setInput(`右に表示した ${$("panelTitle").textContent} で次のエラーが出ます。直した全体を出してください。\n\nエラー：${artifactError}`); };
     if (artifactError) $("fixErr").hidden = false;
+    if ($("aiYes")) { $("aiYes").onclick = () => aiDecide(true); $("aiNo").onclick = () => aiDecide(false); }
   };
   $("panelTools").onclick = (e) => { const b = e.target.closest("[data-mode]"); if (!b) return; if ($("codeEdit")) spec.code = $("codeEdit").value; mode = b.dataset.mode; render(); };
   render();
@@ -551,7 +643,7 @@ async function openArtifact(ref) {
   vers.forEach((v) => artCache.set(v.ref, v));
   if (a.kind === "text") {
     const ext = a.filename.split(".").pop().toLowerCase();
-    if (["html", "svg", "md", "txt", "py", "js", "ts", "css", "json", "csv", "ps1", "sh", "sql", "yaml", "toml", "xml"].includes(ext)) {
+    if (["html", "svg", "md", "txt", "py", "js", "ts", "css", "json", "csv", "ps1", "sh", "sql", "yaml", "toml", "xml", "jsx", "tsx", "mmd"].includes(ext)) {
       const code = await (await api(`/files/${a.ref}`)).text();
       await openCode({ lang: ext, code, title: a.title, ref: a.ref });
       if (vers.length > 1) $("panelBody").insertAdjacentHTML("beforeend", versHTML(vers, a.ref));

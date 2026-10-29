@@ -30,7 +30,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-lao = ["web/*"]
+lao = ["web/*", "web/vendor/*", "web/vendor/licenses/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
