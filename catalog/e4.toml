@@ -1,0 +1,81 @@
+[environment]
+id = "e4"
+name = "動画生成"
+required_inputs = ["text", "image", "video", "audio"]
+required_outputs = ["text", "video"]
+
+# 音声付き。LTX-2.x Community License（年収1,000万ドル以上の組織は有償）
+[[configurations]]
+id = "e4-ltx"
+label = "標準（音声付き LTX）"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0)
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "tool_calls", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
+[configurations.components.videogen]
+role = "video_gen"
+engine = "comfyui"
+model = "LTX-2.5"
+source = { hub = "huggingface", repo = "Lightricks/LTX-2.5", files = [], revision = "", sha256 = {} }   # TODO(P0): 公式 FP8 のファイル
+format = "safetensors"
+quantization = "publisher"          # 公式 FP8
+precision = { publisher = "FP8", runtime = "FP8" }
+license = "LTX-2 Community License"
+size_gb = 50
+mem = { weights_gb = 36, overhead_gb = 16 }
+capabilities = ["video_generate", "image_to_video", "audio_track"]
+max_seconds = 10
+workflow = "workflows/e4-ltx-i2v.json"
+bindings = { prompt = "", negative = "", seed = "", image = "", seconds = "", fps = "", width = "", height = "" }   # TODO(P0)
+
+# 無音。Apache-2.0
+[[configurations]]
+id = "e4-wan"
+label = "無音（Wan 2.2）"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0)
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "tool_calls", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
+[configurations.components.videogen]
+role = "video_gen"
+engine = "comfyui"
+model = "Wan2.2-I2V-A14B"
+source = { hub = "huggingface", repo = "Comfy-Org/Wan_2.2_ComfyUI_Repackaged", files = [], revision = "", sha256 = {} }   # TODO(P0)
+format = "safetensors"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16" }
+license = "Apache-2.0"
+size_gb = 70
+mem = { weights_gb = 66, overhead_gb = 12 }
+capabilities = ["video_generate", "image_to_video"]
+max_seconds = 5
+workflow = "workflows/e4-wan-i2v.json"
+bindings = { prompt = "", negative = "", seed = "", image = "", frames = "", width = "", height = "" }   # TODO(P0)

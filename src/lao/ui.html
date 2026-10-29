@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ローカルAI</title>
+<style>
+  :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#6b6b70; --card:#fff; --line:#e3e3e6; --accent:#2f6fde; --warn:#b54708; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141416; --fg:#ececee; --muted:#9a9aa1; --card:#1e1e21; --line:#2e2e33; --accent:#6e9bff; --warn:#f0a050; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.6 system-ui, "Yu Gothic UI", "Hiragino Sans", sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  select, button, input, textarea { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #status { color:var(--muted); font-size:13px; }
+  main { display:grid; grid-template-columns: 1fr 320px; height: calc(100vh - 54px); }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; height:auto; } aside { border-left:none !important; border-top:1px solid var(--line); } }
+  #chat { display:flex; flex-direction:column; min-height:0; }
+  #log { flex:1; overflow:auto; padding:16px; }
+  .msg { max-width: 760px; margin: 0 0 14px; padding:10px 12px; border-radius:8px; background:var(--card); border:1px solid var(--line); white-space:pre-wrap; word-break:break-word; }
+  .msg.user { margin-left:auto; border-color:var(--accent); }
+  .msg .progress { color:var(--muted); font-size:13px; }
+  .msg .error { color:var(--warn); font-weight:600; }
+  .msg img, .msg video, aside img, aside video { max-width:100%; border-radius:6px; display:block; margin-top:6px; }
+  .msg audio, aside audio { width:100%; margin-top:6px; }
+  #composer { border-top:1px solid var(--line); padding:10px 16px; background:var(--card); }
+  #chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+  .chip { font-size:12px; border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+  .chip button { border:none; padding:0 0 0 4px; background:none; }
+  #composer .row { display:flex; gap:8px; }
+  #text { flex:1; min-height:44px; resize:vertical; }
+  aside { border-left:1px solid var(--line); overflow:auto; padding:12px 16px; }
+  aside h2 { font-size:14px; margin:14px 0 6px; }
+  .item { border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin-bottom:8px; background:var(--card); font-size:13px; }
+  .item .meta { color:var(--muted); font-size:12px; }
+  .warn { color:var(--warn); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ローカルAI</h1>
+  <select id="env" aria-label="環境"></select>
+  <button id="switch">この環境にする</button>
+  <span id="status">未接続</span>
+</header>
+<main>
+  <section id="chat">
+    <div id="log"></div>
+    <div id="composer">
+      <div id="chips"></div>
+      <div class="row">
+        <input type="file" id="file" hidden>
+        <button id="attach" title="ファイルを添付">添付</button>
+        <textarea id="text" placeholder="相談・依頼を入力（Ctrl+Enter で送信）"></textarea>
+        <button id="send" class="primary">送信</button>
+      </div>
+    </div>
+  </section>
+  <aside>
+    <div id="limited" class="warn"></div>
+    <h2>ジョブ</h2><div id="jobs"></div>
+    <h2>成果物</h2><div id="library"></div>
+  </aside>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let key = "";
+try { key = localStorage.getItem("lao-key") || ""; } catch (e) {}
+const qs = new URLSearchParams(location.search);
+if (qs.get("key")) { key = qs.get("key"); try { localStorage.setItem("lao-key", key); } catch (e) {} }
+if (!key) { key = prompt("API キー（サーバー起動時に表示）") || ""; try { localStorage.setItem("lao-key", key); } catch (e) {} }
+
+const history = [];
+let attachments = [];
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + key } });
+  if (!r.ok) { let d = await r.text(); try { d = JSON.parse(d).detail; } catch (e) {} throw new Error(d); }
+  return r.json();
+}
+const fileUrl = (ref) => `/files/${ref}?key=${encodeURIComponent(key)}`;
+
+function media(a) {
+  if (a.kind === "image") return `<img src="${fileUrl(a.ref)}" alt="">`;
+  if (a.kind === "audio") return `<audio controls src="${fileUrl(a.ref)}"></audio>`;
+  if (a.kind === "video") return `<video controls src="${fileUrl(a.ref)}"></video>`;
+  return `<a href="${fileUrl(a.ref)}" target="_blank">開く</a>`;
+}
+function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+async function refresh() {
+  try {
+    const d = await api("/api/environments");
+    const sel = $("env"); const cur = sel.value;
+    sel.innerHTML = "";
+    for (const e of d.environments) for (const c of e.configurations) {
+      const o = document.createElement("option");
+      o.value = e.id + "|" + c.id;
+      o.textContent = `${e.id.toUpperCase()} ${e.name}：${c.label}${c.status === "verified" ? "" : "（未検証）"}`;
+      sel.appendChild(o);
+    }
+    const a = d.active;
+    if (a && a.environment) {
+      sel.value = a.environment.id + "|" + a.configuration.id;
+      const m = a.memory;
+      $("status").textContent = `使用中：${a.environment.name}／ロード済み ${a.loaded.join(", ") || "なし"}／メモリ ${m.used_gb}/${m.budget_gb}GB／${a.lock.holder ? "実行中：" + a.lock.holder : "待機中"}`;
+      $("limited").textContent = a.limited.length ? "機能限定：" + a.limited.join("、") : "";
+    } else if (cur) sel.value = cur;
+    const j = await api("/api/jobs");
+    $("jobs").innerHTML = j.jobs.slice(0, 8).map((x) => `<div class="item"><b>${x.kind}</b> ${x.label}${x.progress != null ? " " + Math.round(x.progress * 100) + "%" : ""}
+      <div class="meta">${esc(x.message || x.error || "")}</div>
+      ${["queued", "loading", "processing", "saving"].includes(x.state) ? `<button data-cancel="${x.id}">停止</button>` : ""}</div>`).join("") || '<div class="meta">なし</div>';
+    const lib = await api("/api/library");
+    $("library").innerHTML = lib.items.slice(0, 30).map((a) => `<div class="item"><div><b>${esc(a.title)}</b></div>
+      <div class="meta">${a.kind}・${a.env.toUpperCase()}・${a.ref}</div>${media(a)}<button data-use="${a.ref}">添付する</button></div>`).join("") || '<div class="meta">なし</div>';
+  } catch (e) { $("status").textContent = "接続エラー：" + e.message; }
+}
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target;
+  if (t.dataset.cancel) { await api(`/api/jobs/${t.dataset.cancel}/cancel`, { method: "POST" }); refresh(); }
+  if (t.dataset.use) { if (!attachments.includes(t.dataset.use)) attachments.push(t.dataset.use); chips(); }
+  if (t.dataset.drop) { attachments = attachments.filter((r) => r !== t.dataset.drop); chips(); }
+});
+
+function chips() { $("chips").innerHTML = attachments.map((r) => `<span class="chip">${r}<button data-drop="${r}" aria-label="外す">×</button></span>`).join(""); }
+
+$("switch").onclick = async () => {
+  const [env, configuration] = $("env").value.split("|");
+  try { await api("/api/environment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ env, configuration }) }); history.length = 0; $("log").innerHTML = ""; }
+  catch (e) { alert(e.message); }
+  refresh();
+};
+$("attach").onclick = () => $("file").click();
+$("file").onchange = async () => {
+  const f = $("file").files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  try { const a = await api("/api/upload", { method: "POST", body: fd }); attachments.push(a.ref); chips(); refresh(); }
+  catch (e) { alert("添付できません：" + e.message); }
+  $("file").value = "";
+};
+
+function bubble(cls) { const d = document.createElement("div"); d.className = "msg " + cls; $("log").appendChild(d); return d; }
+
+async function send() {
+  const text = $("text").value.trim(); if (!text) return;
+  const refs = attachments.slice();
+  const ub = bubble("user"); ub.textContent = text + (refs.length ? `\n[添付 ${refs.join(", ")}]` : "");
+  history.push({ role: "user", content: text + (refs.length ? `\n[添付 ${refs.join(", ")}]` : "") });
+  $("text").value = ""; attachments = []; chips();
+  const ab = bubble("assistant"); let answer = "";
+  try {
+    const r = await fetch("/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify({ messages: history, attachments: refs, stream: true }) });
+    if (!r.ok) { let d = await r.text(); try { d = JSON.parse(d).detail; } catch (e) {} throw new Error(d); }
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).replace(/^data: /, ""); buf = buf.slice(i + 2);
+        if (line === "[DONE]") continue;
+        const piece = JSON.parse(line).choices[0].delta.content || "";
+        if (piece.startsWith("> ")) { const p = document.createElement("div"); p.className = "progress"; p.textContent = piece.slice(2).trim(); ab.appendChild(p); refresh(); }
+        else if (piece.startsWith("**")) { const p = document.createElement("div"); p.className = "error"; p.textContent = piece.replace(/\*\*/g, ""); ab.appendChild(p); }
+        else if (piece.includes("/files/")) {
+          for (const m of piece.matchAll(/\/files\/([0-9a-f]{12}@\d+)/g)) {
+            const a = (await api("/api/library")).items.find((x) => x.ref === m[1]);
+            if (a) { const w = document.createElement("div"); w.innerHTML = `<div class="progress">${a.kind}：${a.ref}</div>` + media(a); ab.appendChild(w); }
+          }
+        } else if (piece) { answer += piece; let t = ab.querySelector(".text"); if (!t) { t = document.createElement("div"); t.className = "text"; ab.appendChild(t); } t.textContent = answer; }
+      }
+    }
+    history.push({ role: "assistant", content: answer });
+  } catch (e) { const p = document.createElement("div"); p.className = "error"; p.textContent = e.message; ab.appendChild(p); }
+  refresh();
+}
+$("send").onclick = send;
+$("text").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); });
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

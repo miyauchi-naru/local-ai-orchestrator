@@ -1,0 +1,87 @@
+[environment]
+id = "e1"
+name = "推論"
+required_inputs = ["text", "image", "audio", "video"]
+required_outputs = ["text"]
+
+# 二段構成：大型の推論モデル＋画像・音声を読む理解モデル
+[[configurations]]
+id = "e1-standard"
+label = "標準（推論＋理解の二段）"
+status = "candidate"
+chat_component = "reasoner"
+
+[configurations.components.reasoner]
+role = "chat"
+engine = "llama"
+model = "gpt-oss-120b"
+source = { hub = "huggingface", repo = "ggml-org/gpt-oss-120b-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }
+format = "gguf"
+quantization = "publisher"          # 配布元形式 MXFP4
+precision = { publisher = "MXFP4", runtime = "MXFP4", kv_cache = "f16" }
+license = "Apache-2.0"
+size_gb = 64
+mem = { weights_gb = 61, overhead_gb = 3 }
+kv = { n_layers = 36, n_kv_heads = 8, head_dim = 64, bytes_per_elem = 2 }
+context = { max = 131072, default = 32768 }
+capabilities = ["text", "tool_calls"]
+args = ["--jinja", "-fa", "on"]
+
+[configurations.components.perceiver]
+role = "perceive"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0): リポジトリ名を確認
+format = "gguf"
+quantization = "none"               # BF16 を想定。配布形式を P0 で確認
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
+# 単一構成：一つのモデルで対話と理解を兼ねる（品質が同等ならこちらを選ぶ）
+[[configurations]]
+id = "e1-omni"
+label = "単一（Omni）"
+status = "candidate"
+chat_component = "omni"
+
+[configurations.components.omni]
+role = "chat"
+engine = "llama"
+model = "Qwen3-Omni-30B-A3B-Instruct"
+source = { hub = "huggingface", repo = "ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0)
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Apache-2.0"
+size_gb = 62
+mem = { weights_gb = 61, overhead_gb = 4 }
+context = { max = 65536, default = 32768 }
+capabilities = ["text", "tool_calls", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
+# 映像と音声トラックを一緒に聞ける単一モデル（llama.cpp の input_video が LFM3-Omni のサウンドトラックに対応）
+[[configurations]]
+id = "e1-lfm3-omni"
+label = "単一（映像＋音声をそのまま理解）"
+status = "candidate"
+chat_component = "omni"
+
+[configurations.components.omni]
+role = "chat"
+engine = "llama"
+model = "LFM3-Omni"
+source = { hub = "huggingface", repo = "", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0): 配布元・サイズ・ライセンスを確認
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "TODO(P0)"
+size_gb = 20
+mem = { weights_gb = 18, overhead_gb = 6 }
+context = { max = 32768, default = 32768 }
+capabilities = ["text", "tool_calls", "image", "audio", "video_audio"]
+args = ["--jinja"]

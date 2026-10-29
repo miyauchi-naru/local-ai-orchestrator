@@ -1,0 +1,74 @@
+# 実機ごとの設定。config/machine.toml にコピーして使う。
+# 「# P0」の付いた値は、実機検証（lao p0 run → lao p0 propose）の結果で埋める。
+
+[machine]
+name = "rtx-spark-128"
+expected_total_memory_gb = 128
+# native（Windows Arm64 で直接）か wsl2（WSL2 内の Linux Arm64）  # P0
+runtime = "native"
+
+[paths]
+# モデル・エンジン・成果物の置き場所。外付けSSDにする場合はここを変える
+root = "C:/lao"
+models = "C:/lao/models"
+engines = "C:/lao/engines"
+library = "C:/lao/library"
+jobs = "C:/lao/jobs"
+
+[memory]
+# AI 全体で使ってよい量（統合メモリ）。OS・他アプリ用の残りはこの外
+budget_gb = 96
+# GPU から実際に確保できた上限  # P0
+gpu_allocatable_gb = 0
+# 見積もりに掛ける安全係数（実測ピーク × 係数で受付判定）
+safety_factor = 1.15
+# 実行直前に OS 全体で最低限空いていてほしい量
+min_free_system_gb = 8
+
+[policy]
+# 配布元が公式に出している量子化形式（例：gpt-oss の MXFP4）は候補にしてよい
+allow_publisher_quantized = true
+# 第三者が量子化した配布物（コミュニティ GGUF 等）を使ってよいか。初期値は不許可
+allow_third_party_quantized = false
+# 生成物の外部送信は常に不可（変更不可）
+allow_network_egress = false
+
+[server]
+host = "127.0.0.1"
+port = 8710
+# Open WebUI などから接続するときの API キー（空なら起動時に生成して表示）
+api_key = ""
+
+[engines.llama]
+# llama-server 実行ファイル  # P0
+binary = "C:/lao/engines/llama.cpp/llama-server.exe"
+# 1 プロセスあたりの既定値
+port_base = 8720
+extra_args = []
+
+[engines.comfyui]
+# ComfyUI の起動コマンドと URL  # P0
+command = ["C:/lao/engines/comfyui/.venv/Scripts/python.exe", "main.py", "--listen", "127.0.0.1", "--port", "8730"]
+cwd = "C:/lao/engines/comfyui"
+url = "http://127.0.0.1:8730"
+
+[engines.ffmpeg]
+binary = "C:/lao/engines/ffmpeg/bin/ffmpeg.exe"
+ffprobe = "C:/lao/engines/ffmpeg/bin/ffprobe.exe"
+
+[engines.tts]
+# TTS エンジン（候補は P0 で決定）。HTTP で text→wav を返すサーバーとして扱う  # P0
+command = []
+cwd = ""
+url = "http://127.0.0.1:8740"
+
+[gpu]
+# 長い生成を区切る単位（GPU タイムアウト対策）。動画は秒、音声は文字数  # P0
+video_segment_seconds = 5
+tts_chunk_chars = 200
+# 1 回の推論・生成の最長時間。超えたらエンジン異常とみなす  # P0
+watchdog_seconds = 900
+
+# 実機で測った値。lao p0 propose が書き込む。カタログの見積もりより優先される
+[measured]
+# 例： "e1.reasoner" = { peak_gb = 68.2, load_seconds = 41.0, tokens_per_second = 44.1 }

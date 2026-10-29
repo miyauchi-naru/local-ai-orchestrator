@@ -1,0 +1,39 @@
+[environment]
+id = "e3"
+name = "音声生成"
+required_inputs = ["text", "audio"]
+required_outputs = ["text", "audio"]
+
+[[configurations]]
+id = "e3-standard"
+label = "標準"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0)
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "tool_calls", "audio"]
+args = ["--jinja"]
+
+[configurations.components.tts]
+role = "tts"
+engine = "tts"
+model = "TODO(P0): 日本語対応・参照音声で声質指定できる TTS（CosyVoice 系、Qwen3-TTS 等から選定）"
+source = { hub = "huggingface", repo = "", files = [], revision = "", sha256 = {} }
+format = "engine-specific"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16" }
+license = "TODO(P0)"
+size_gb = 8
+mem = { weights_gb = 6, overhead_gb = 4 }
+capabilities = ["speech_generate", "voice_reference"]
