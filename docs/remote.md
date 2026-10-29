@@ -40,7 +40,7 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
 
 ## 準備（Spark 側）
 
-**利用者の「開始」指示の後に行います。**
+**利用者の「開始」指示の後に行います。** 到着後の作業をまとめて流す `scripts\setup-spark.ps1`（[arrival.md](arrival.md)）がこの準備も行います。以下は手で行うときの手順です。
 
 1. lao を導入し、`lao serve` が動くようにする（README の手順）。
 2. メイン PC の公開鍵（`id_ed25519.pub`）を Spark にコピーする（USB メモリなど）。
@@ -54,6 +54,8 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
 スクリプトがすること：OpenSSH サーバーの導入と自動起動、パスワードでのログイン禁止（鍵だけ）、ログインできる利用者をこの人だけにする、ファイアウォールを同じ LAN のプライベートネットワークからだけにする、公開鍵の登録、受け取り箱（`D:\lao\inbox`）の作成。
 
 ## 準備（メイン PC 側）
+
+Windows なら `scripts\prepare-main-pc.ps1` が 1〜5 をまとめて行います（[arrival.md](arrival.md)）。
 
 1. 鍵を作る（無ければ）：`ssh-keygen -t ed25519`
 2. `~/.ssh/config` に Spark を登録する：
@@ -72,8 +74,9 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
    `OK：lao serve に接続できました` と出れば成功です。
 4. Claude Code に登録する：
    ```
-   claude mcp add lao --scope user -- ssh spark C:/lao/venv/Scripts/lao.exe mcp
+   claude mcp add lao --scope user -- ssh -o ClearAllForwardings=yes spark C:/lao/venv/Scripts/lao.exe mcp
    ```
+   `ClearAllForwardings` は、下の「lao の画面をメイン PC で使う」で `LocalForward` を足したときに、ブラウザ用の `ssh -N spark` と 8710 番を取り合わないようにするためです。
 5. 動画は数分かかるので、Claude Code の MCP の待ち時間を延ばします（`~/.claude/settings.json`）：
    ```json
    { "env": { "MCP_TOOL_TIMEOUT": "900000" } }

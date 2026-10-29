@@ -30,7 +30,7 @@ args = ["--jinja"]
 role = "video_gen"
 engine = "comfyui"
 model = "LTX-2.5"
-source = { hub = "huggingface", repo = "Lightricks/LTX-2.5", files = [], revision = "", sha256 = {} }   # TODO(P0): 公式 FP8 のファイル
+source = { hub = "huggingface", repo = "Lightricks/LTX-2.5", files = [], revision = "", sha256 = {} }   # TODO(P0): LTX-2.5 は見つからない（2026-10-29）。Lightricks/LTX-2 か LTX-2.3-fp8 の公式 FP8 から選ぶ
 format = "safetensors"
 quantization = "publisher"          # 公式 FP8
 precision = { publisher = "FP8", runtime = "FP8" }
