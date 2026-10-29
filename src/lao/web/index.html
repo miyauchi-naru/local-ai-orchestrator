@@ -150,6 +150,13 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; heigh
 .send { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; padding: 0; font-size: 18px; }
 .send:hover { background: var(--accent); filter: brightness(1.05); }
 .rec { color: var(--warn); }
+.voice { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; text-align: center; }
+.vorb { width: 140px; height: 140px; border-radius: 50%; background: var(--accent); opacity: .85; transition: transform .1s linear; }
+.voice[data-s="think"] .vorb { animation: vpulse 1.2s ease-in-out infinite; opacity: .5; }
+.voice[data-s="speak"] .vorb { animation: vpulse .6s ease-in-out infinite; }
+@keyframes vpulse { 50% { transform: scale(1.12); } }
+.vstate { font-size: 20px; }
+.vtext { max-width: 640px; max-height: 30vh; overflow: auto; color: var(--muted); white-space: pre-wrap; }
 .hint { max-width: 780px; margin: 6px auto 0; font-size: 12px; color: var(--faint); text-align: center; }
 .popup { position: absolute; left: 12px; right: 12px; bottom: calc(100% + 6px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); max-height: 280px; overflow: auto; z-index: 4; padding: 4px; }
 .popup button { width: 100%; text-align: left; display: block; padding: 6px 10px; }
@@ -300,6 +307,7 @@ dl.meta dd { margin: 0; word-break: break-word; }
           <input type="file" id="file" hidden multiple>
           <button id="attach" title="添付" aria-label="添付">＋</button>
           <button id="mic" title="録音して添付（E1 が聞き取ります）" aria-label="録音" hidden>●</button>
+          <button id="voiceBtn" title="音声で会話する" aria-label="音声で会話" hidden>声</button>
           <select class="pick" id="stylePick" aria-label="応答スタイル" title="応答スタイル"></select>
           <select class="pick" id="effortPick" aria-label="思考の強さ" title="思考の強さ" hidden>
             <option value="">思考：既定</option><option value="low">思考：軽め</option><option value="medium">思考：普通</option><option value="high">思考：深く</option>
@@ -308,6 +316,13 @@ dl.meta dd { margin: 0; word-break: break-word; }
           <div class="grow"></div>
           <button class="send" id="send" title="送信（Enter）" aria-label="送信">↑</button>
         </div>
+      </div>
+      <div class="voice" id="voice" hidden>
+        <div class="vorb" id="vOrb"></div>
+        <div class="vstate" id="vState"></div>
+        <div class="vtext" id="vText"></div>
+        <div class="actions"><button class="btn" id="vTap"></button><button class="btn" id="vEnd">音声会話を終える</button></div>
+        <p class="small muted" id="vNote"></p>
       </div>
       <div class="hint" id="hint">Enter で送信、Shift+Enter で改行、/ でコマンド</div>
     </div>
@@ -730,6 +745,7 @@ async function refreshStatus() {
 }
 function renderFeatureButtons() {
   $("mic").hidden = !hasCap("audio");
+  $("voiceBtn").hidden = !hasCap("audio");
   const c = activeConf();
   $("effortPick").hidden = !(c && c.chat_capabilities.includes("reasoning_effort"));
 }
@@ -909,12 +925,13 @@ async function send(opts = {}) {
   if (!activeKey()) { toast("先に環境を選んでください"); return; }
   if (!opts.regenerate && opts.editTurn == null) await ensureConv();
   const c = state.conv;
-  const refs = opts.regenerate ? [] : opts.editTurn != null ? (c.turns[opts.editTurn].attachments || []) : state.attachments.slice();
+  const refs = opts.regenerate ? [] : opts.editTurn != null ? (c.turns[opts.editTurn].attachments || []) : (opts.attachments || state.attachments.slice());
   if (opts.regenerate) { while (c.turns.length && c.turns[c.turns.length - 1].role === "assistant") c.turns.pop(); }
   else if (opts.editTurn != null) { c.turns = c.turns.slice(0, opts.editTurn); }
   if (!opts.regenerate) {
     c.turns.push({ role: "user", content: text, attachments: refs });
-    if (opts.text == null) { $("input").value = ""; autosize(); state.attachments = []; renderChips(); }
+    if (opts.text == null) { $("input").value = ""; autosize(); }
+    if (!opts.attachments) { state.attachments = []; renderChips(); }
   }
   await renderThread();
   const live = { role: "assistant", content: "", thinking: "", progress: [], artifacts: [], error: "" };
@@ -925,6 +942,7 @@ async function send(opts = {}) {
   const t0 = performance.now(); let firstTok = 0;
   const body = opts.regenerate ? { regenerate: true } : { text, attachments: refs, ...(opts.editTurn != null ? { edit_turn: opts.editTurn } : {}) };
   body.effort = $("effortPick").hidden ? "" : $("effortPick").value;
+  if (opts.voice) body.voice = true;
   let pending = false, ended = false;
   const paint = () => { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; if (ended) return; const cards = el.querySelector(".cards").innerHTML; el.innerHTML = assistantHTML(live, true); el.querySelector(".cards").innerHTML = cards; scrollDown(); }); };
   try {
@@ -954,6 +972,7 @@ async function send(opts = {}) {
   el.innerHTML = assistantHTML(live, false) + assistantTools(live); el.dataset.idx = c.turns.length - 1; await fillCards(el, live.artifacts);
   $("title").textContent = c.title; markLast();
   setRunning(false); loadConvs(); refreshStatus();
+  if (opts.voice) return live;
   if (document.hidden && store("lao-notify") === "1" && "Notification" in window && Notification.permission === "granted") {
     new Notification("ローカルAI：返答ができました", { body: (live.error || live.content).slice(0, 80), icon: "/icon.svg" });
   }
@@ -990,17 +1009,112 @@ async function turnAction(act, el) {
     return send({ editTurn: idx, text: v.trim() });
   }
   if (act === "speak") {
-    try {
-      const { job } = await getJSON("/api/speak", { method: "POST", json: { text: t.content.replace(/```[\s\S]*?```/g, "").slice(0, 10000) } });
-      toast("読み上げ音声を作っています…");
-      for (let i = 0; i < 600; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const j = await getJSON(`/api/jobs/${job}`);
-        if (j.state === "done") { const ref = j.result[0]; new Audio(fileUrl(ref)).play(); return; }
-        if (["failed", "cancelled", "interrupted"].includes(j.state)) { toast(j.error || "読み上げできませんでした"); return; }
-      }
-    } catch (e) { toast(e.message); }
+    try { toast("読み上げ音声を作っています…"); new Audio(fileUrl(await speechFor(t.content))).play(); }
+    catch (e) { toast(e.message); }
   }
+}
+function speakable(text) {
+  return text.replace(/```[\s\S]*?```/g, "").replace(/https?:\/\/\S+/g, "").replace(/^\s*[|#>*-]+\s*/gm, "").replace(/[*`_|]/g, "").trim().slice(0, 10000);
+}
+async function speechFor(text, isStopped = () => false) {
+  // E3 の読み上げで音声を作り、成果物の ref を返す
+  const { job } = await getJSON("/api/speak", { method: "POST", json: { text: speakable(text) } });
+  for (let i = 0; i < 1200; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (isStopped()) { api(`/api/jobs/${job}/cancel`, { method: "POST" }).catch(() => {}); throw new Error("止めました"); }
+    const j = await getJSON(`/api/jobs/${job}`);
+    if (j.state === "done") return j.result[0];
+    if (["failed", "cancelled", "interrupted"].includes(j.state)) throw new Error(j.error || "読み上げできませんでした");
+  }
+  throw new Error("読み上げに時間がかかりすぎました");
+}
+
+/* ---------- 音声会話（話す → 聞き取って答える → 読み上げる、を繰り返す。録音はこの PC の中だけで扱う） ---------- */
+const voice = { on: false, stream: null, ctx: null, rec: null, audio: null, phase: "" };
+const VOICE_PROMPT = "（音声で話しかけました。録音を聞いて答えてください）";
+function voiceUI(phase, text) {
+  voice.phase = phase; $("voice").dataset.s = phase;
+  $("vState").textContent = { listen: "聞いています…", think: "考えています…", speak: "話しています…", idle: "一時停止中" }[phase] || "";
+  $("vTap").textContent = { listen: "話し終わった", think: "止める", speak: "さえぎって話す", idle: "もう一度話す" }[phase] || "";
+  if (text != null) $("vText").textContent = text;
+  $("vOrb").style.transform = "";
+}
+async function startVoice() {
+  if (!hasCap("audio")) { toast("この環境は音声を聞き取れません（E1 か E3 を選んでください）"); return; }
+  if (state.running) { toast("返答が終わってから始めてください"); return; }
+  try { voice.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { toast("マイクを使えませんでした"); return; }
+  voice.ctx = new AudioContext(); voice.on = true;
+  $("voice").hidden = false; $("vText").textContent = "";
+  $("vNote").textContent = hasCap("speech_generate") ? "返答は読み上げます。会話は普段どおり保存されます。"
+    : "この環境には読み上げがないため、返答は文字で表示します（読み上げは E3 で使えます）。";
+  listen();
+}
+function endVoice() {
+  voice.on = false;
+  if (voice.rec && voice.rec.state !== "inactive") { voice.rec.onstop = null; voice.rec.stop(); }
+  if (voice.audio) voice.audio.pause();
+  if (state.running) stop();
+  if (voice.stream) voice.stream.getTracks().forEach((t) => t.stop());
+  if (voice.ctx) voice.ctx.close().catch(() => {});
+  Object.assign(voice, { stream: null, ctx: null, rec: null, audio: null });
+  $("voice").hidden = true;
+}
+function listen() {
+  if (!voice.on) return;
+  voiceUI("listen");
+  const an = voice.ctx.createAnalyser(); an.fftSize = 1024; voice.ctx.createMediaStreamSource(voice.stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  const rec = new MediaRecorder(voice.stream); const chunks = []; voice.rec = rec;
+  let floor = 0.01, loud = 0, spoke = false, quietSince = 0; const t0 = performance.now();
+  rec.ondataavailable = (e) => chunks.push(e.data);
+  const tick = () => {
+    if (rec.state !== "recording") return;
+    an.getFloatTimeDomainData(buf);
+    const rms = Math.sqrt(buf.reduce((a, x) => a + x * x, 0) / buf.length); const now = performance.now();
+    // 周りの音の大きさ：静かになるとすぐ下げ、うるさいときはゆっくり上げる
+    floor = rms < floor ? (floor + rms) / 2 : floor * 0.995 + rms * 0.005;
+    const th = Math.max(0.012, floor * 3);
+    $("vOrb").style.transform = `scale(${1 + Math.min(rms * 6, 0.5)})`;
+    loud = rms > th ? loud + 1 : 0;
+    if (loud >= 3) { spoke = true; quietSince = 0; }  // 0.15 秒以上続いたら話し声とみなす（物音を拾わない）
+    else if (rms > th && spoke) quietSince = 0;
+    else if (spoke) { quietSince = quietSince || now; if (now - quietSince > 1300) return rec.stop(); }
+    if (now - t0 > 60000) return rec.stop();  // 1 回は 60 秒まで
+    setTimeout(tick, 50);
+  };
+  rec.onstop = async () => {
+    voice.rec = null;
+    if (!voice.on) return;
+    if (!spoke && !rec.manual) return listen();  // 何も話されなかった
+    const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+    voiceUI("think", "");
+    let ref;
+    try {
+      const fd = new FormData(); fd.append("file", new File([blob], `音声_${new Date().toLocaleTimeString("ja-JP").replace(/:/g, "")}.webm`, { type: blob.type }));
+      const a = await (await api("/api/upload", { method: "POST", body: fd })).json(); artCache.set(a.ref, a); ref = a.ref;
+    } catch (e) { voiceUI("idle", `録音を送れませんでした：${e.message}`); return; }
+    const live = await send({ text: VOICE_PROMPT, attachments: [ref], voice: true });
+    if (!voice.on) return;
+    if (!live || live.error) { voiceUI("idle", live ? live.error : "送れませんでした"); return; }
+    const said = speakable(live.content);
+    if (!hasCap("speech_generate") || !said) { voiceUI("idle", live.content); return; }
+    voiceUI("think", live.content);
+    try {
+      const out = await speechFor(said, () => !voice.on || voice.phase !== "think");
+      if (!voice.on) return;
+      voiceUI("speak"); voice.audio = new Audio(fileUrl(out));
+      voice.audio.onended = () => { voice.audio = null; listen(); };
+      await voice.audio.play();
+    } catch (e) { if (voice.on && voice.phase === "think") voiceUI("idle", `${live.content}\n\n（読み上げできませんでした：${e.message}）`); }
+  };
+  rec.start(250); tick();
+}
+function voiceTap() {
+  if (voice.phase === "listen" && voice.rec) { voice.rec.manual = true; voice.rec.stop(); }
+  else if (voice.phase === "think") { if (state.running) stop(); voiceUI("idle"); }
+  else if (voice.phase === "speak") { if (voice.audio) { voice.audio.onended = null; voice.audio.pause(); voice.audio = null; } listen(); }
+  else listen();
 }
 
 /* ---------- 添付 ---------- */
@@ -1428,6 +1542,7 @@ $("searchBtn").onclick = openSearch;
 $("closePanel").onclick = () => $("panel").classList.remove("open");
 $("attach").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); attachMenu(r.left, r.top - 170); };
 $("mic").onclick = toggleRecord;
+$("voiceBtn").onclick = startVoice; $("vTap").onclick = voiceTap; $("vEnd").onclick = endVoice;
 $("file").onchange = async () => { await uploadFiles([...$("file").files]); $("file").value = ""; };
 $("send").onclick = () => (state.running ? stop() : send());
 $("title").onclick = () => { if (state.conv && state.view === "chat" && !state.conv.incognito) renameConv(state.conv.id, state.conv.title); };
@@ -1446,6 +1561,7 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && k === "k") { e.preventDefault(); openSearch(); }
   else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === "o") { e.preventDefault(); newChat(); }
   else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === "s") { e.preventDefault(); $("app").classList.toggle("side-hidden"); $("showSide").hidden = !$("app").classList.contains("side-hidden"); }
+  else if (e.key === "Escape" && voice.on) endVoice();
   else if (e.key === "Escape") { if ($("modal").classList.contains("show") && state.key) closeDialog(); else if (state.running) stop(); else $("menu").hidden = true; }
 });
 $("menuBtn").onclick = () => $("app").classList.toggle("side-open");

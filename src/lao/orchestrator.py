@@ -62,6 +62,7 @@ class TurnContext:
     folders: Folders | None = None  # 利用者が許可した PC のフォルダ
     allow_schedule: bool = False  # 定期実行の登録を提案してよいか
     knowledge: list[str] = field(default_factory=list)  # プロジェクトの資料（id@版）
+    voice: bool = False  # 音声会話（返答は読み上げられる）
 
 
 def use_skill_schema(skills: list[SkillRef]) -> dict:
@@ -192,6 +193,10 @@ ARTIFACT_GUIDE = (
     "利用者が許可したときだけ動く）。"
 )
 
+VOICE_GUIDE = ("いまは音声での会話です。利用者の発言は録音で届きます（聞き取れないときは聞き返してください）。"
+               "返答はそのまま読み上げられるので、話し言葉で短く（多くても 3〜4 文）答え、"
+               "表・コード・箇条書き・URL・記号は使わないでください。")
+
 ARTIFACT_SYSTEM = ("あなたは、利用者の画面で動く小さなアプリから呼ばれています。求められた形式（JSON など）どおりに、"
                    "余計な前置きなしで答えてください。日本語で問われたら日本語で答えてください。")
 
@@ -247,6 +252,8 @@ def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: Tur
     if tc.agents:
         lines.append("任せられる担当（delegate_task の agent）：")
         lines += [f"- {k.name}：{k.description}" for k in tc.agents]
+    if tc.voice:
+        lines.append(VOICE_GUIDE)
     if tc.instructions.strip():
         lines.append("以下は利用者とプロジェクトの指示です。上の決まりと食い違うときは上の決まりを優先してください。")
         lines.append(tc.instructions.strip())

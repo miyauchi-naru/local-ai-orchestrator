@@ -160,7 +160,7 @@ class Service:
     def folders(self) -> Folders:
         return Folders(parse_folders(self.settings().get("folders", [])), self.root / "trash")
 
-    def turn_context(self, c: Conversation, effort: str | None = None) -> TurnContext:
+    def turn_context(self, c: Conversation, effort: str | None = None, voice: bool = False) -> TurnContext:
         settings = self.settings()
         use_memory = settings["memory_enabled"] and not c.incognito
         folders = self.folders()
@@ -170,12 +170,13 @@ class Service:
                            allow_remember=use_memory,
                            effort=str(effort or settings.get("effort") or "") or None,
                            folders=folders if folders.folders else None, allow_schedule=not c.incognito,
-                           knowledge=self._knowledge(c.project_id))
+                           knowledge=self._knowledge(c.project_id), voice=voice)
 
-    async def run_turn(self, c: Conversation, reply: Turn, effort: str | None = None) -> AsyncIterator[Event]:
+    async def run_turn(self, c: Conversation, reply: Turn, effort: str | None = None,
+                       voice: bool = False) -> AsyncIterator[Event]:
         """会話の続きを作る。reply を更新しながら出来事を返す（画面と定期実行で共通）。"""
         orch = self.orchestrator
-        tc = self.turn_context(c, effort)
+        tc = self.turn_context(c, effort, voice)
         max_tokens = int(self.settings()["max_tokens"])
         refs = [r for r in tc.knowledge if self._exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
         refs = list(dict.fromkeys(refs))

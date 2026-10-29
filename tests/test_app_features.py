@@ -226,3 +226,13 @@ def test_create_office_file_in_conversation(client):
     new = [r for e in events if e["type"] == "artifacts" for r in e["data"]["refs"]]
     assert new and new[0].split("@")[0] == refs[0].split("@")[0] and new[0] != refs[0]
     assert client.get("/api/preview/000000000000@1").status_code == 404
+
+
+def test_voice_turn_uses_spoken_style(client, svc):
+    cid = _conv(client, env="e3")
+    events = _send(client, cid, text="（音声で話しかけました。録音を聞いて答えてください）", voice=True)
+    assert events[-1]["type"] == "done" and events[-1]["title"] == "音声会話"
+    eng = svc.runtime.engine(svc.runtime.conf.chat_component)
+    assert "音声での会話" in eng.calls[-1][0]["content"]
+    _send(client, cid, text="ふつうの質問")
+    assert "音声での会話" not in eng.calls[-1][0]["content"]
