@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   RTX Spark（Windows 11 on Arm）にネイティブでエンジン群を用意する。
 

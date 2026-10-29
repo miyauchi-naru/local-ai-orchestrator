@@ -1,0 +1,127 @@
+﻿<#
+.SYNOPSIS
+  別の PC（メイン PC）の Claude Code から、この PC の lao を SSH 越しに使えるようにする。
+
+.DESCRIPTION
+  既定は「何をするかを表示するだけ」。-Execute を付けたときだけ実行する（利用者の「開始」指示の後）。
+  管理者の PowerShell で実行する。
+
+  - OpenSSH サーバーを入れ、自動起動にする
+  - 鍵でのログインだけを許し、パスワードでのログインを禁止する。ログインできる利用者もこの人だけにする
+  - ファイアウォールは「プライベート」ネットワークの同じ LAN（LocalSubnet）からだけ 22 番を許す
+  - メイン PC の公開鍵を登録する
+  - 受け取り箱（$Root\inbox）を作る（メイン PC から scp で送ったファイルを import_file で取り込む）
+  - -AutostartServe を付けると、ログオン時に lao serve を起動するタスクを登録する
+
+  lao serve と ComfyUI は今まで通り 127.0.0.1 でだけ待ち受ける。LAN に開くのは SSH だけ。
+  終わったらメイン PC から `ssh spark C:/lao/venv/Scripts/lao.exe mcp --check` で確かめる（docs/remote.md）。
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\enable-remote.ps1 -PublicKeyFile .\main-pc.pub            # 確認のみ
+  powershell -ExecutionPolicy Bypass -File scripts\enable-remote.ps1 -PublicKeyFile .\main-pc.pub -Execute   # 実行
+#>
+param(
+  [switch]$Execute,
+  [string]$PublicKeyFile = "",
+  [string]$Root = "C:\lao",
+  [switch]$AutostartServe
+)
+$ErrorActionPreference = "Stop"
+$Repo = Split-Path -Parent $PSScriptRoot
+$User = $env:USERNAME
+$SshDir = "$env:ProgramData\ssh"
+$Config = "$SshDir\sshd_config"
+$Lao = "$Root\venv\Scripts\lao.exe"
+
+function Step([string]$Title, [scriptblock]$Action) {
+  Write-Host "== $Title" -ForegroundColor Cyan
+  if ($Execute) { & $Action } else { Write-Host "   （確認のみ）$($Action.ToString().Trim())" }
+}
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+  [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) { Write-Warning "管理者の PowerShell で実行してください"; if ($Execute) { exit 1 } }
+if (-not $PublicKeyFile -or -not (Test-Path $PublicKeyFile)) {
+  Write-Warning "メイン PC の公開鍵（例：id_ed25519.pub）を -PublicKeyFile で指定してください"
+  if ($Execute) { exit 1 }
+} else {
+  $Key = (Get-Content $PublicKeyFile -Raw).Trim()
+  if ($Key -notmatch '^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) ') { throw "公開鍵の形式ではありません：$PublicKeyFile" }
+  if ($Key -match 'PRIVATE KEY') { throw "秘密鍵が指定されています。.pub の方を渡してください" }
+}
+# 管理者の利用者は administrators_authorized_keys が使われる（Windows の OpenSSH の決まり）
+$KeyFile = if (Get-LocalGroupMember -SID "S-1-5-32-544" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like "*\$User" }) { "$SshDir\administrators_authorized_keys" } else { "$env:USERPROFILE\.ssh\authorized_keys" }
+
+function Set-SshdOption([string]$Name, [string]$Value) {
+  $lines = if (Test-Path $Config) { Get-Content $Config } else { @() }
+  $pattern = "^\s*#?\s*$Name\s"
+  if ($lines | Where-Object { $_ -match $pattern }) {
+    $lines = $lines | ForEach-Object { if ($_ -match $pattern) { "$Name $Value" } else { $_ } }
+  } else {
+    # Match ブロックより前に置かないと効かないので、先頭に足す
+    $lines = @("$Name $Value") + $lines
+  }
+  Set-Content -Path $Config -Value $lines -Encoding ascii
+}
+
+Step "OpenSSH サーバーを入れる" {
+  $cap = Get-WindowsCapability -Online | Where-Object Name -like "OpenSSH.Server*"
+  if ($cap.State -ne "Installed") { Add-WindowsCapability -Online -Name $cap.Name | Out-Null }
+}
+Step "sshd を自動起動にして起動する（設定ファイルを作るため一度起動する）" {
+  Set-Service -Name sshd -StartupType Automatic
+  Start-Service sshd
+}
+Step "鍵でのログインだけを許し、ログインできる利用者を $User に限る" {
+  Copy-Item $Config "$Config.bak-lao" -Force
+  Set-SshdOption "PubkeyAuthentication" "yes"
+  Set-SshdOption "PasswordAuthentication" "no"
+  Set-SshdOption "KbdInteractiveAuthentication" "no"
+  Set-SshdOption "PermitEmptyPasswords" "no"
+  Set-SshdOption "AllowUsers" $User
+  & "$env:windir\System32\OpenSSH\sshd.exe" -t
+  if ($LASTEXITCODE -ne 0) { Copy-Item "$Config.bak-lao" $Config -Force; throw "sshd_config が正しくないため元に戻しました" }
+}
+Step "メイン PC の公開鍵を登録する（$KeyFile）" {
+  New-Item -ItemType Directory -Force -Path (Split-Path $KeyFile) | Out-Null
+  $existing = if (Test-Path $KeyFile) { Get-Content $KeyFile } else { @() }
+  if ($existing -notcontains $Key) { Add-Content -Path $KeyFile -Value $Key -Encoding ascii }
+  if ($KeyFile -like "$SshDir*") {
+    # 管理者用の鍵ファイルは Administrators と SYSTEM だけが触れるようにしないと無視される
+    icacls.exe $KeyFile /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F" | Out-Null
+  }
+}
+Step "ファイアウォール：SSH はプライベートネットワークの同じ LAN からだけ許す" {
+  $rule = Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
+  if ($rule) {
+    Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Profile Private -RemoteAddress LocalSubnet -Enabled True
+  } else {
+    New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (lao, LAN only)" -Direction Inbound `
+      -Protocol TCP -LocalPort 22 -Action Allow -Profile Private -RemoteAddress LocalSubnet | Out-Null
+  }
+  $category = (Get-NetConnectionProfile | Select-Object -First 1).NetworkCategory
+  if ($category -ne "Private") { Write-Warning "今のネットワークは $category です。家の LAN なら「プライベート」に変えてください" }
+}
+Step "sshd を設定どおりに起動し直す" {
+  Restart-Service sshd
+}
+Step "受け取り箱を作る（$Root\inbox）" {
+  New-Item -ItemType Directory -Force -Path "$Root\inbox" | Out-Null
+}
+if ($AutostartServe) {
+  Step "ログオン時に lao serve を起動するタスク（lao-serve）を登録する" {
+    $action = New-ScheduledTaskAction -Execute $Lao -Argument "serve" -WorkingDirectory $Repo
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries
+    Register-ScheduledTask -TaskName "lao-serve" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+  }
+}
+
+Write-Host ""
+if (-not $Execute) {
+  Write-Host "（確認のみ。実行するには -Execute を付けて、管理者の PowerShell で実行します）" -ForegroundColor Yellow
+} else {
+  Write-Host "完了。この PC の名前：$env:COMPUTERNAME（メイン PC の ~/.ssh/config の HostName に使う）" -ForegroundColor Green
+  Write-Host "次の手順：メイン PC から ssh spark $($Lao.Replace('\', '/')) mcp --check（docs/remote.md）" -ForegroundColor Green
+}

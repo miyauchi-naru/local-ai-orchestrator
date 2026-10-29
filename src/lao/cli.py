@@ -1,4 +1,4 @@
-"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | sandbox-check"""
+"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | sandbox-check | mcp"""
 
 from __future__ import annotations
 
@@ -129,7 +129,14 @@ def cmd_serve(args) -> int:
     else:
         machine = load_machine(config)
         service = Service(machine, catalog_dir)
-    key = machine["server"].get("api_key") or secrets.token_urlsafe(18)
+    key = machine["server"].get("api_key") or ""
+    if not key:
+        # 起動のたびに作るキーは、同じ PC の lao mcp が読めるよう root/server.key に残す
+        key = secrets.token_urlsafe(18)
+        key_file = machine.path_of("root") / "server.key"
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_text(key, encoding="utf-8")
+        key_file.chmod(0o600)
     if args.env:
         asyncio.run(service.select(args.env, args.configuration))
     app = create_app(service, key)
@@ -181,6 +188,21 @@ def cmd_sandbox_check(args) -> int:
     return 1
 
 
+def cmd_mcp(args) -> int:
+    from .config import load_machine
+    from .mcp import run
+
+    config, _ = _paths(args)
+    if args.fake:
+        from .config import MachineConfig
+        from .demo import demo_machine
+
+        machine = MachineConfig(demo_machine(Path(tempfile.gettempdir()) / "lao-demo"))
+    else:
+        machine = load_machine(config)
+    return run(machine, url=args.url, check=args.check)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lao", description="RTX Spark 向けローカルAI環境ツール")
     p.add_argument("--config", help="machine.toml のパス")
@@ -205,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--envs", help="測る環境（例：e1,e2）")
     sp.add_argument("--skip-models", action="store_true")
     sub.add_parser("sandbox-check", help="コード実行の箱が通信できず、PC のファイルも見えないことを確かめる")
+    sp = sub.add_parser("mcp", help="別の PC の Claude Code から使う MCP サーバー（SSH 越しに起動する）")
+    sp.add_argument("--check", action="store_true", help="lao serve につながるかだけ確かめる")
+    sp.add_argument("--url", help="lao serve の URL（既定は machine.toml の port）")
+    sp.add_argument("--fake", action="store_true", help="lao serve --fake につなぐ")
     args = p.parse_args(argv)
     if args.cmd == "doctor":
         return cmd_doctor(args)
@@ -216,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(args)
     if args.cmd == "sandbox-check":
         return cmd_sandbox_check(args)
+    if args.cmd == "mcp":
+        return cmd_mcp(args)
     return cmd_p0(args)
 
 

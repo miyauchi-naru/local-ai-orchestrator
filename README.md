@@ -90,6 +90,10 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - 設定：あなたについて、応答スタイル（標準・簡潔・説明的・学習・丁寧と自作）、出力の上限、メモリ（一覧・編集・取り込み・書き出し・全消去）、テーマ、文字の大きさ、終わった時の通知、ショートカット一覧
 - アプリとして入れる：Edge のアドレスバーの「アプリを使用できます」→ インストール。スタートメニューとタスクバーから独立した窓で開けます（PWA。中身はこの PC 内のサーバーで、外部には送りません）
 
+## 別の PC の Claude Code から使う
+
+メイン PC の Claude Code から、SSH 越しに `lao mcp` を道具として使えます。画像・動画・読み上げ音声の生成と、要約・翻訳・仕上がりの確認などの下請けをこの PC に任せ、Claude のトークンを節約します。LAN に開くのは SSH だけで、lao と ComfyUI は 127.0.0.1 のままです。準備（`scripts\enable-remote.ps1`）と使い方は [docs/remote.md](docs/remote.md) にあります。
+
 ## Open WebUI などから使う
 
 `lao serve` は OpenAI 互換の `/v1/chat/completions` を出します。既存の UI から「OpenAI 互換の接続先」として `http://127.0.0.1:8710/v1` と API キーを登録できます（Ollama 連携は無効にしてください）。環境の切り替えは本ツールの画面か `/api/environment` で行います。
@@ -112,6 +116,7 @@ src/lao/
   media.py        ffmpeg による検査・分割
   installer.py    モデル取得（再開・ハッシュ照合）
   server.py       API と画面の配信
+  mcp.py          別の PC の Claude Code 向け MCP サーバー（lao mcp）
   conversations.py 会話の保存
   web/            画面（index.html、PWA の manifest と service worker）
   backends/       llama-server、ComfyUI、TTS、ダミー
