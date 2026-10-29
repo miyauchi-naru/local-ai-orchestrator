@@ -186,6 +186,16 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; heigh
 .item { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--panel); display: flex; gap: 10px; align-items: flex-start; }
 .item .main { flex: 1; min-width: 0; }
 .item .main b { display: block; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.stat { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--panel); }
+.stat b { display: block; font-size: 24px; }
+.stat span { font-size: 12px; color: var(--muted); }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 110px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.bars div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; opacity: .85; }
+.barlbl { display: flex; gap: 3px; font-size: 11px; color: var(--faint); }
+.barlbl span { flex: 1; text-align: center; }
+.nudge { max-width: 780px; margin: 0 auto 8px; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 8px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.nudge .grow { flex: 1; }
 .item .main .d { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .form { display: grid; gap: 10px; }
 .form label { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
@@ -272,6 +282,7 @@ dl.meta dd { margin: 0; word-break: break-word; }
       <button data-view="library">▦ 成果物ライブラリ</button>
       <button data-view="customize">✦ スキル・コマンド・プラグイン</button>
       <button data-view="tasks">⏰ 定期実行<span id="taskBadge"></span></button>
+      <button data-view="recap">📅 ふりかえり</button>
       <button data-view="settings">⚙ 設定</button>
     </div>
     <div class="convs" id="convs"></div>
@@ -299,6 +310,7 @@ dl.meta dd { margin: 0; word-break: break-word; }
       <div class="page" id="page" hidden></div>
     </div>
     <div class="composer-wrap" id="composerWrap">
+      <div class="nudge" id="nudge" hidden><span class="grow" id="nudgeText"></span><button class="btn" id="nudgeRest">休憩する</button><button class="btn" id="nudgeLater">あとで</button></div>
       <div class="composer" id="composer">
         <div class="popup" id="popup" hidden></div>
         <div class="chips" id="chips"></div>
@@ -943,6 +955,7 @@ async function send(opts = {}) {
   const body = opts.regenerate ? { regenerate: true } : { text, attachments: refs, ...(opts.editTurn != null ? { edit_turn: opts.editTurn } : {}) };
   body.effort = $("effortPick").hidden ? "" : $("effortPick").value;
   if (opts.voice) body.voice = true;
+  noteActivity();
   let pending = false, ended = false;
   const paint = () => { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; if (ended) return; const cards = el.querySelector(".cards").innerHTML; el.innerHTML = assistantHTML(live, true); el.querySelector(".cards").innerHTML = cards; scrollDown(); }); };
   try {
@@ -1411,6 +1424,72 @@ async function pollTasks() {
 }
 setInterval(pollTasks, 60000);
 
+/* ---------- ふりかえり ---------- */
+async function renderRecap(month) {
+  showView("recap");
+  const now = new Date();
+  const months = [...Array(12)].map((_, i) => { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  month = month || months[0];
+  let r; try { r = await getJSON(`/api/recap?month=${month}`); } catch (e) { $("page").innerHTML = `<h1>ふりかえり</h1><p>${esc(e.message)}</p>`; return; }
+  const max = (a) => Math.max(1, ...a);
+  const bars = (vals, labels) => `<div class="bars">${vals.map((v, i) => `<div style="height:${(v / max(vals)) * 100}%" title="${esc(labels[i])}：${v}"></div>`).join("")}</div>
+    <div class="barlbl">${labels.map((l, i) => `<span>${vals.length > 12 && i % 3 ? "" : esc(l)}</span>`).join("")}</div>`;
+  const diff = r.previous_messages ? Math.round((r.messages / r.previous_messages - 1) * 100) : null;
+  const ENV = Object.fromEntries(state.envs.map((e) => [e.id, `${e.id.toUpperCase()} ${e.name}`]));
+  const kv = (o, f = (k) => k) => Object.entries(o).map(([k, v]) => `<div class="item"><div class="main"><b>${esc(f(k))}</b></div><span>${v}</span></div>`).join("") || '<p class="muted">ありません</p>';
+  $("page").innerHTML = `<h1>ふりかえり</h1>
+    <p class="muted">この PC に保存した会話と成果物から数えています（シークレットの会話は入りません）。どこにも送りません。</p>
+    <div class="row2"><select class="field" id="rcMonth" style="max-width:180px">${months.map((m) => `<option ${m === month ? "selected" : ""}>${m}</option>`).join("")}</select>
+      <button class="btn" id="rcAsk" ${r.messages ? "" : "disabled"}>この月を AI とふりかえる</button></div>
+    ${r.messages ? `<div class="stats" style="margin-top:14px">
+      <div class="stat"><b>${r.messages}</b><span>送った発言${diff == null ? "" : `（前の月より ${diff >= 0 ? "+" : ""}${diff}%）`}</span></div>
+      <div class="stat"><b>${r.conversations}</b><span>会話（新しく始めた ${r.started}）</span></div>
+      <div class="stat"><b>${r.active_days} 日</b><span>使った日（連続 最長 ${r.longest_streak} 日）</span></div>
+      <div class="stat"><b>${r.busiest_day ? r.busiest_day.date.slice(5).replace("-", "/") : "—"}</b><span>いちばん使った日（${r.busiest_day ? r.busiest_day.messages : 0} 回）</span></div>
+      <div class="stat"><b>${Object.values(r.artifacts).reduce((a, b) => a + b, 0)}</b><span>作った成果物</span></div>
+      <div class="stat"><b>${Math.round(r.chars_received / 1000)}k</b><span>受け取った文字（送った ${Math.round(r.chars_typed / 1000)}k）</span></div>
+    </div>
+    <h2>時間帯</h2>${bars(r.by_hour, [...Array(24)].map((_, h) => `${h}`))}
+    ${r.late_night_messages ? `<p class="small muted">夜中（0〜5 時）の発言が ${r.late_night_messages} 回ありました。</p>` : ""}
+    <h2>曜日</h2>${bars(r.by_weekday, ["月", "火", "水", "木", "金", "土", "日"])}
+    <h2>環境</h2><div class="list">${kv(r.by_env, (k) => ENV[k] || k.toUpperCase())}</div>
+    <h2>作った成果物</h2><div class="list">${kv(r.artifacts, (k) => KIND[k] || k)}</div>
+    <h2>よく使ったコマンド</h2><div class="list">${kv(r.commands, (k) => "/" + k)}</div>
+    <h2>よく話した会話</h2><div class="list">${r.top_conversations.map((c) => `<div class="item"><div class="main"><b>${esc(c.title)}</b><span class="d">${c.messages} 回</span></div><button class="btn" data-open="${c.id}">開く</button></div>`).join("")}</div>`
+    : '<p class="muted" style="margin-top:14px">この月の会話はまだありません。</p>'}`;
+  $("rcMonth").onchange = () => renderRecap($("rcMonth").value);
+  $("page").querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openConv(b.dataset.open)));
+  $("rcAsk").onclick = async () => {
+    if (!activeKey()) { toast("先に環境を選んでください"); return; }
+    newChat();
+    const brief = { ...r, top_conversations: r.top_conversations.map((c) => `${c.title}（${c.messages} 回）`) };
+    await send({ text: `${month} の AI の使い方をふりかえりたいです。次の数字（この PC の記録）をもとに、よく取り組んだこと、うまく使えていた点、次の月に試すとよさそうなことを、短く温かくまとめてください。数字にないことは決めつけないでください。\n\n${JSON.stringify(brief, null, 1)}` });
+  };
+}
+
+/* 休憩の声かけ：続けて使った時間を数え、設定の分数を超えたら一度だけすすめる */
+function noteActivity() {
+  const now = Date.now(), last = +store("lao-act-last") || 0;
+  if (now - last > 15 * 60000) store("lao-act-start", String(now));
+  store("lao-act-last", String(now));
+  const mins = +((state.settings || {}).break_minutes ?? 90);
+  const start = +store("lao-act-start") || now, nudged = +store("lao-act-nudged") || 0;
+  const used = Math.round((now - start) / 60000);
+  const h = new Date().getHours();
+  if (mins && used >= mins && now - Math.max(nudged, start) >= mins * 60000) {
+    showNudge(`続けて ${used >= 120 ? Math.floor(used / 60) + " 時間" : used + " 分"}ほど使っています。目を休めたり、体を伸ばしたりしませんか。`);
+  } else if (mins && h < 5 && now - nudged > 30 * 60000 && store("lao-act-night") !== new Date().toDateString()) {
+    store("lao-act-night", new Date().toDateString());
+    showNudge("夜遅い時間です。続きは明日にして、休むのもよさそうです。");
+  }
+}
+function showNudge(text) {
+  store("lao-act-nudged", String(Date.now()));
+  $("nudgeText").textContent = text; $("nudge").hidden = false;
+}
+$("nudgeLater").onclick = () => { $("nudge").hidden = true; };
+$("nudgeRest").onclick = () => { $("nudge").hidden = true; store("lao-act-start", String(Date.now() + 5 * 60000)); toast("いってらっしゃい。会話はそのまま残っています"); };
+
 /* ---------- 設定 ---------- */
 async function renderSettings() {
   showView("settings");
@@ -1436,6 +1515,8 @@ async function renderSettings() {
     <div class="list">${(s.folders || []).map((f, i) => `<div class="item"><div class="main"><b>${esc(f.path)}</b><span class="d">${f.write ? "読み書き" : "読むだけ"}</span></div>
       <button class="btn" data-fwrite="${i}">${f.write ? "読むだけにする" : "書き込みも許可"}</button><button class="btn danger" data-frm="${i}">外す</button></div>`).join("") || '<p class="muted">まだありません</p>'}</div>
     <div class="actions" style="margin-top:8px"><button class="btn" id="stAddFolder">フォルダを許可（パスを入力）</button></div>
+    <h2>休憩の声かけ</h2><p class="small muted">続けて使っているとき、区切りのよいところで休憩をすすめます（15 分あくと、続けての使用は数え直します）。</p>
+    <select class="field" id="stBreak" style="max-width:200px">${[[0, "しない"], [45, "45 分ごと"], [60, "60 分ごと"], [90, "90 分ごと"], [120, "120 分ごと"]].map(([k, l]) => `<option value="${k}" ${+s.break_minutes === k ? "selected" : ""}>${l}</option>`).join("")}</select>
     <h2>外観</h2>
     <div class="row2"><span class="seg" id="stTheme">${[["system", "システム"], ["light", "ライト"], ["dark", "ダーク"]].map(([k, l]) => `<button data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</span>
     <span class="seg" id="stFs">${[["14", "小"], ["15", "中"], ["17", "大"]].map(([k, l]) => `<button data-fs="${k}" class="${fs === k ? "on" : ""}">${l}</button>`).join("")}</span></div>
@@ -1449,7 +1530,8 @@ async function renderSettings() {
   styleSel.value = s.style; $("stEffort").value = s.effort || "";
   $("stSave").onclick = async () => {
     const ok = await saveSettings({ about_me: $("stAbout").value, style: styleSel.value, max_tokens: parseInt($("stMax").value, 10) || 2048,
-      effort: $("stEffort").value, memory_enabled: $("stMem").checked, memory_sensitive: $("stSens").checked });
+      effort: $("stEffort").value, memory_enabled: $("stMem").checked, memory_sensitive: $("stSens").checked,
+      break_minutes: parseInt($("stBreak").value, 10) || 0 });
     if (ok) { toast("保存しました"); loadSettings(); }
   };
   $("stAddStyle").onclick = async () => {
@@ -1518,7 +1600,7 @@ document.addEventListener("click", async (ev) => {
   if (t.dataset.copycode) return copyText(codeStore[+t.dataset.copycode].code);
   if (t.dataset.skillsave) return saveSkillFromText(codeStore[+t.dataset.skillsave].code.trim());
   if (t.dataset.act) return turnAction(t.dataset.act, t.closest(".turn"));
-  if (t.dataset.view) { const v = t.dataset.view; if (v === "library") return openLibrary(); if (v === "projects") return renderProjects(); if (v === "customize") return renderCustomize(); if (v === "settings") return renderSettings(); if (v === "tasks") return renderTasks(); }
+  if (t.dataset.view) { const v = t.dataset.view; if (v === "library") return openLibrary(); if (v === "projects") return renderProjects(); if (v === "customize") return renderCustomize(); if (v === "settings") return renderSettings(); if (v === "tasks") return renderTasks(); if (v === "recap") return renderRecap(); }
   if (t.dataset.proj) return renderProject(t.dataset.proj);
   if (t.dataset.ctab) return renderCustomize(t.dataset.ctab);
   if (t.dataset.newitem) return itemEditor(t.dataset.newitem, null);
