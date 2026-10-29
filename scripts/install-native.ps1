@@ -13,7 +13,8 @@
 #>
 param(
   [switch]$Execute,
-  [string]$Root = "C:\lao",
+  [string]$Root = "C:\lao",                 # モデル・エンジン・Python 環境（C：1TB）
+  [string]$DataRoot = "D:\lao",            # 成果物・会話・ジョブ・ログ・ComfyUI の出力（D：2TB）
   [string]$LlamaCppRef = "master",          # TODO(P0): 動作確認した版（タグ）に固定する
   [string]$ComfyUIRef = "master",           # TODO(P0): 動作確認した版に固定する
   [string]$TorchSpec = 'torch==2.14.0+cu134 torchvision==0.29.0+cu134 torchaudio==2.11.0+cu134',
@@ -36,12 +37,16 @@ Write-Host "メモリ: ${mem}GB"
 $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
 if ($smi) { & nvidia-smi --query-gpu=name,driver_version --format=csv,noheader } else { Write-Warning "nvidia-smi が見つかりません（ドライバ未導入）" }
 if (Get-Command ollama -ErrorAction SilentlyContinue) { Write-Warning "ollama が入っています。本ツールは使いません" }
-$drive = (Split-Path -Qualifier $Root)
-$free = [math]::Round((Get-PSDrive $drive.TrimEnd(':')).Free / 1GB)
-Write-Host "空き容量 ${drive}: ${free}GB（推奨 500GB 以上）"
+foreach ($pair in @(@($Root, "モデル用、推奨 500GB 以上"), @($DataRoot, "成果物用"))) {
+  $drive = (Split-Path -Qualifier $pair[0])
+  $psd = Get-PSDrive $drive.TrimEnd(':') -ErrorAction SilentlyContinue
+  if (-not $psd) { Write-Warning "ドライブ $drive がありません（$($pair[1])）"; if ($Execute) { exit 1 }; continue }
+  Write-Host "空き容量 ${drive}: $([math]::Round($psd.Free / 1GB))GB（$($pair[1])）"
+}
 
-Step "フォルダを作る ($Root)" {
-  foreach ($d in "models","engines","library","jobs","logs") { New-Item -ItemType Directory -Force -Path (Join-Path $Root $d) | Out-Null }
+Step "フォルダを作る（$Root にモデルとエンジン、$DataRoot に成果物と作業データ）" {
+  foreach ($d in "models","engines") { New-Item -ItemType Directory -Force -Path (Join-Path $Root $d) | Out-Null }
+  foreach ($d in "library","jobs","logs","inbox","comfyui\output","comfyui\input") { New-Item -ItemType Directory -Force -Path (Join-Path $DataRoot $d) | Out-Null }
 }
 
 # Python は Arm64 版が必要（x64 版では CUDA 版 PyTorch が入らない）

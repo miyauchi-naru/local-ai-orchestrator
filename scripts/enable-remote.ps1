@@ -10,7 +10,7 @@
   - 鍵でのログインだけを許し、パスワードでのログインを禁止する。ログインできる利用者もこの人だけにする
   - ファイアウォールは「プライベート」ネットワークの同じ LAN（LocalSubnet）からだけ 22 番を許す
   - メイン PC の公開鍵を登録する
-  - 受け取り箱（$Root\inbox）を作る（メイン PC から scp で送ったファイルを import_file で取り込む）
+  - 受け取り箱（$DataRoot\inbox）を作る（メイン PC から scp で送ったファイルを import_file で取り込む）
   - -AutostartServe を付けると、ログオン時に lao serve を起動するタスクを登録する
 
   lao serve と ComfyUI は今まで通り 127.0.0.1 でだけ待ち受ける。LAN に開くのは SSH だけ。
@@ -23,7 +23,8 @@
 param(
   [switch]$Execute,
   [string]$PublicKeyFile = "",
-  [string]$Root = "C:\lao",
+  [string]$Root = "C:\lao",       # lao の Python 環境がある場所
+  [string]$DataRoot = "D:\lao",   # machine.toml の paths.root（受け取り箱を置く）
   [switch]$AutostartServe
 )
 $ErrorActionPreference = "Stop"
@@ -106,8 +107,8 @@ Step "ファイアウォール：SSH はプライベートネットワークの�
 Step "sshd を設定どおりに起動し直す" {
   Restart-Service sshd
 }
-Step "受け取り箱を作る（$Root\inbox）" {
-  New-Item -ItemType Directory -Force -Path "$Root\inbox" | Out-Null
+Step "受け取り箱を作る（$DataRoot\inbox）" {
+  New-Item -ItemType Directory -Force -Path "$DataRoot\inbox" | Out-Null
 }
 if ($AutostartServe) {
   Step "ログオン時に lao serve を起動するタスク（lao-serve）を登録する" {

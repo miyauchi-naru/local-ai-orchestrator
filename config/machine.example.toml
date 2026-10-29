@@ -8,12 +8,13 @@ expected_total_memory_gb = 128
 runtime = "native"
 
 [paths]
-# モデル・エンジン・成果物の置き場所。外付けSSDにする場合はここを変える
-root = "C:/lao"
+# 置き場所。RTX Spark では C（1TB）にモデルとエンジン、D（2TB）に成果物と作業データを置く。
+# root には会話・設定・ログ・作業用の一時ファイル・受け取り箱（inbox）・API キー（server.key）が入る
+root = "D:/lao"
 models = "C:/lao/models"
 engines = "C:/lao/engines"
-library = "C:/lao/library"
-jobs = "C:/lao/jobs"
+library = "D:/lao/library"
+jobs = "D:/lao/jobs"
 
 [memory]
 # AI 全体で使ってよい量（統合メモリ）。OS・他アプリ用の残りはこの外
@@ -48,7 +49,10 @@ extra_args = []
 
 [engines.comfyui]
 # ComfyUI の起動コマンドと URL  # P0
-command = ["C:/lao/engines/comfyui/.venv/Scripts/python.exe", "main.py", "--listen", "127.0.0.1", "--port", "8730"]
+# ComfyUI が書き出す画像・動画（lao が成果物へ取り込む前の複製）と一時ファイルも D に置く
+command = ["C:/lao/engines/comfyui/.venv/Scripts/python.exe", "main.py", "--listen", "127.0.0.1", "--port", "8730",
+           "--output-directory", "D:/lao/comfyui/output", "--input-directory", "D:/lao/comfyui/input",
+           "--temp-directory", "D:/lao/comfyui"]
 cwd = "C:/lao/engines/comfyui"
 url = "http://127.0.0.1:8730"
 
