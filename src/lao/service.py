@@ -33,7 +33,8 @@ STYLES = {
     "formal": "丁寧な文体で、仕事の文書に使える形で答えてください。",
 }
 DEFAULT_SETTINGS = {"about_me": "", "style": "standard", "custom_styles": [], "max_tokens": 2048,
-                    "memory_enabled": True, "memory_sensitive": False, "effort": "", "folders": []}
+                    "memory_enabled": True, "memory_sensitive": False, "effort": "", "folders": [],
+                    "break_minutes": 90}
 BUILTIN_COMMANDS = [
     Command("スキルを作る", "会話しながらスキル（SKILL.md）の下書きを作る",
             "これから一緒にスキル（手順書）を作ります。作りたいもの：$ARGUMENTS\n\n"
@@ -131,6 +132,10 @@ class Service:
                 v = int(v)
                 if not 256 <= v <= 32768:
                     raise ValueError("max_tokens は 256〜32768 です")
+            if k == "break_minutes":
+                v = int(v)
+                if v and not 15 <= v <= 600:
+                    raise ValueError("休憩の声かけは 15〜600 分か、0（しない）です")
             if k == "about_me":
                 v = str(v)[:4000]
             if k == "folders":

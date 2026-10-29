@@ -699,6 +699,15 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             raise HTTPException(503, f"AI に問い合わせできませんでした：{e}") from e
         return {"text": text}
 
+    @app.get("/api/recap", dependencies=[Depends(auth)])
+    def get_recap(month: str = ""):
+        from .recap import recap
+        month = month or time.strftime("%Y-%m")
+        try:
+            return recap(service.conversations.list(), service.library.list(), month)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.get("/api/search", dependencies=[Depends(auth)])
     async def search_docs(q: str = "", project: str = "", limit: int = 10):
         """手元の資料を探す（画面の検索欄）。project を渡すとそのプロジェクトの資料だけ。"""
