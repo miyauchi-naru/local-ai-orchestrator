@@ -15,6 +15,7 @@ from .orchestrator import Orchestrator, SkillRef
 from .plugins import Command, CommandStore, PluginStore
 from .user_memory import MemoryStore
 from .projects import ProjectStore
+from .sandbox import Sandbox, SandboxConfig
 from .skills import SkillStore
 from .runtime import Runtime, default_engine_factory
 
@@ -58,6 +59,7 @@ class Service:
         self.media = Media(ff.get("binary", "ffmpeg"), ff.get("ffprobe", "ffprobe"))
         self.lock = InferenceLock()
         self.work_dir = root / "work"
+        self.sandbox = Sandbox(SandboxConfig.from_machine(machine.raw, root / "sandbox"))
         self.log_dir = root / "logs"
         self._factory = engine_factory or default_engine_factory(machine, self.log_dir)
         self.memory_probe = memory_probe
@@ -118,7 +120,9 @@ class Service:
         return d
 
     def active_skills(self) -> list[SkillRef]:
-        out = [SkillRef(s.name, s.description, s.body) for s in self.skills.enabled()]
+        out = [SkillRef(s.name, s.description, s.body,
+                        str(self.skills.files_dir(s.name)) if self.skills.files(s.name) else "")
+               for s in self.skills.enabled()]
         for p in self.plugins.list():
             if p.enabled:
                 out += [SkillRef(f"{p.name}:{s.name}", s.description, s.body) for s in p.skills if s.enabled]
@@ -194,7 +198,7 @@ class Service:
         self.runtime = Runtime(self.machine, env, env.configurations[conf_id], self._factory, lock=self.lock,
                                probe=self.memory_probe)
         self.orchestrator = Orchestrator(self.runtime, self.library, self.jobs, self.media,
-                                         self.work_dir, self.catalog_dir)
+                                         self.work_dir, self.catalog_dir, self.sandbox)
         return self.runtime
 
     async def shutdown(self) -> None:

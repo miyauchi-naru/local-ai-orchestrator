@@ -25,6 +25,7 @@ from .media import Media, audio_part, image_part, segment_message, video_part
 from .memory import kv_cache_gb
 from .runtime import NotAdmitted, Runtime
 from .documents import DocumentError, best_chunks, extract_text
+from .sandbox import Sandbox, SandboxError
 from .tools import ToolError, tools_for, validate
 
 MAX_TOOL_ROUNDS = 4
@@ -44,6 +45,7 @@ class SkillRef:
     name: str
     description: str
     body: str
+    files_dir: str = ""  # スキルに付けたファイル（コード実行の箱の /work/skill に置く）
 
 
 @dataclass
@@ -105,6 +107,20 @@ CREATE_FILE_SCHEMA = {"type": "function", "function": {
         "required": ["format", "title", "content"], "additionalProperties": False}}}
 
 
+RUN_CODE_SCHEMA = {"type": "function", "function": {
+    "name": "run_code",
+    "description": "Python のコードを、ネットにつながらない箱の中で実行する。計算・集計・表の加工・グラフ作り・ファイルの変換に使う。"
+                   "files に渡した成果物は /work/in/ に、skill を指定するとそのスキルに付いたファイルが /work/skill/ に置かれる。"
+                   "結果のファイルは /work/out/ に書くと成果物として保存される（グラフは matplotlib で png に保存）。"
+                   "print した内容と、エラーの内容が返る。インターネットやパッケージの追加は使えない。",
+    "parameters": {"type": "object", "properties": {
+        "code": {"type": "string", "description": "実行する Python のコード"},
+        "files": {"type": "array", "items": {"type": "string"}, "description": "使う成果物（id@版）"},
+        "skill": {"type": "string", "description": "付いたファイルを使うスキルの名前"},
+        "timeout": {"type": "integer", "description": "最長の秒数（既定 60）"}},
+        "required": ["code"], "additionalProperties": False}}}
+
+
 def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: TurnContext | None = None,
                   query: str = "", doc_budget: int = 40000) -> str:
     tc = tc or TurnContext()
@@ -146,7 +162,8 @@ def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: Tur
         lines += [f"- {m}" for m in tc.memories]
     if tc.skills:
         lines.append("使えるスキル（依頼が説明に合うときは、答える前に use_skill で本文を読み込んでください）：")
-        lines += [f"- {k.name}：{k.description}" for k in tc.skills]
+        lines += [f"- {k.name}：{k.description}" + ("（ファイル付き。run_code の skill に名前を渡すと /work/skill/ で使える）" if k.files_dir else "")
+                  for k in tc.skills]
     if tc.agents:
         lines.append("任せられる担当（delegate_task の agent）：")
         lines += [f"- {k.name}：{k.description}" for k in tc.agents]
@@ -165,8 +182,10 @@ def last_user_text(messages: list[dict]) -> str:
 
 
 class Orchestrator:
-    def __init__(self, rt: Runtime, library: Library, jobs: JobManager, media: Media, work_dir: Path, catalog_dir: Path):
+    def __init__(self, rt: Runtime, library: Library, jobs: JobManager, media: Media, work_dir: Path, catalog_dir: Path,
+                 sandbox: Sandbox | None = None):
         self.rt, self.library, self.jobs, self.media = rt, library, jobs, media
+        self.sandbox = sandbox
         self.work_dir, self.catalog_dir = work_dir, catalog_dir
         gpu = rt.machine.raw.get("gpu", {})
         self.video_segment_seconds = float(gpu.get("video_segment_seconds", 5))
@@ -181,6 +200,8 @@ class Orchestrator:
     def _build(self, messages: list[dict], attachments: list[str], tc: TurnContext, depth: int):
         tools = [t.schema() for t in tools_for(self.rt.conf)]
         tools.append(CREATE_FILE_SCHEMA)
+        if self.sandbox and self.sandbox.conf.enabled:
+            tools.append(RUN_CODE_SCHEMA)
         if tc.skills:
             tools.append(use_skill_schema(tc.skills))
         if depth == 0:
@@ -251,6 +272,10 @@ class Orchestrator:
                     result = self._use_skill(raw, tc.skills)
                     yield Event("progress", f"スキル「{result['skill']}」を読み込みました" if result.get("ok")
                                 else f"スキルを読み込めませんでした：{result['error']}")
+                elif name == "run_code" and self.sandbox and self.sandbox.conf.enabled:
+                    result = {"ok": False, "error": "実行できませんでした"}
+                    async for ev in self._run_code(_args(raw), tc, result):
+                        yield ev
                 elif name == "create_file":
                     result = self._create_file(_args(raw))
                     if result["ok"]:
@@ -314,6 +339,47 @@ class Orchestrator:
                 sub_err = ev.text
         result.update({"ok": not sub_err, "result": "".join(sub_text), "artifacts": sub_refs, "error": sub_err})
         yield Event("progress", f"{who}の作業が終わりました" if not sub_err else f"{who}が止まりました：{sub_err}")
+
+    async def _run_code(self, a: dict, tc: TurnContext, result: dict) -> AsyncIterator[Event]:
+        code = str(a.get("code") or "")
+        inputs = []
+        try:
+            for ref in a.get("files") or []:
+                art = self.library.get(str(ref))
+                inputs.append((art.title if "." in art.title else f"{art.title}{Path(art.filename).suffix}",
+                               self.library.path(art)))
+        except (KeyError, ValueError) as e:
+            result["error"] = f"成果物がありません：{e}"
+            yield Event("progress", f"コードを実行できませんでした：{result['error']}")
+            return
+        skill_dir = None
+        if a.get("skill"):
+            ref = next((k for k in tc.skills if k.name == a["skill"]), None)
+            if not ref or not ref.files_dir:
+                result["error"] = f"ファイルの付いたスキル {a['skill']} はありません"
+                yield Event("progress", f"コードを実行できませんでした：{result['error']}")
+                return
+            skill_dir = Path(ref.files_dir)
+        yield Event("progress", f"コードを実行しています（ネットにつながらない箱の中）\n{code[:3000]}")
+        try:
+            res = await self.sandbox.run(code, inputs=inputs, skill_dir=skill_dir, timeout=a.get("timeout"))
+        except (SandboxError, OSError) as e:
+            result["error"] = str(e)
+            yield Event("progress", f"コードを実行できませんでした：{e}")
+            return
+        try:
+            refs = [self.library.add_file(p, env_id=self.rt.env.id, configuration=self.rt.conf.id, title=p.name,
+                                          generation={"tool": "run_code", "code": code[:20000]}).ref
+                    for p in res.outputs]
+        finally:
+            Sandbox.cleanup(res)
+        state = "時間切れで止めました" if res.timed_out else "終わりました" if res.exit_code == 0 else f"エラーで終わりました（{res.exit_code}）"
+        shown = "\n".join(x for x in (res.stdout[-2000:].strip(), res.stderr[-2000:].strip()) if x)
+        yield Event("progress", f"コードの実行が{state}" + (f"\n{shown}" if shown else ""))
+        if refs:
+            yield Event("artifacts", data={"refs": refs})
+        result.clear()
+        result.update({"ok": res.exit_code == 0, **res.summary(), "artifacts": refs})
 
     def _create_file(self, a: dict) -> dict:
         from .office import OfficeError, render

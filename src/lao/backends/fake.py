@@ -51,8 +51,8 @@ class FakeLlama:
                 return _msg("覚えました。")
             if res.get("ok"):
                 text = f"できました：{', '.join(res.get('artifacts', []))}"
-                if res.get("output"):
-                    text += f"\n{res['output']}"
+                if res.get("output") or res.get("stdout"):
+                    text += f"\n{res.get('output') or res['stdout']}"
             else:
                 text = f"できませんでした：{res.get('error')}"
             return _msg(text)
@@ -71,6 +71,8 @@ class FakeLlama:
         skill = re.search(r"^- (\S+)：", system, re.M) if "スキル" in user else None
         if skill and "use_skill" in names:
             return _call("use_skill", {"name": skill.group(1)})
+        if "計算" in user and "run_code" in names:
+            return _call("run_code", {"code": "print(sum(range(101)))\nopen('out/result.csv', 'w').write('a,b\\n1,2\\n')"})
         fmt = next((f for k, f in (("Word", "docx"), ("Excel", "xlsx"), ("スライド", "pptx"), ("PDF", "pdf"))
                     if k in user), None)
         if fmt and "create_file" in names:

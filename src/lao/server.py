@@ -440,6 +440,34 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             raise HTTPException(404, "スキルがありません") from e
         return {"deleted": name}
 
+    @app.get("/api/skills/{name}/files", dependencies=[Depends(auth)])
+    def skill_files(name: str):
+        try:
+            service.skills.get(name)
+        except KeyError as e:
+            raise HTTPException(404, "スキルがありません") from e
+        return {"items": service.skills.files(name), "sandbox": service.sandbox.conf.enabled}
+
+    @app.put("/api/skills/{name}/files/{filename}", dependencies=[Depends(auth)])
+    async def put_skill_file(name: str, filename: str, request: Request):
+        from .skills import SkillError
+        data = await request.body()
+        try:
+            service.skills.save_file(name, filename, data)
+        except KeyError as e:
+            raise HTTPException(404, "スキルがありません") from e
+        except SkillError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"items": service.skills.files(name)}
+
+    @app.delete("/api/skills/{name}/files/{filename}", dependencies=[Depends(auth)])
+    def delete_skill_file(name: str, filename: str):
+        try:
+            service.skills.delete_file(name, filename)
+        except KeyError as e:
+            raise HTTPException(404, "ファイルがありません") from e
+        return {"items": service.skills.files(name)}
+
     # ------------------------------------------------------------ メモリ
     @app.get("/api/memory", dependencies=[Depends(auth)])
     def memory_list():
