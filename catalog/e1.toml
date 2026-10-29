@@ -24,7 +24,7 @@ size_gb = 64
 mem = { weights_gb = 61, overhead_gb = 3 }
 kv = { n_layers = 36, n_kv_heads = 8, head_dim = 64, bytes_per_elem = 2 }
 context = { max = 131072, default = 32768 }
-capabilities = ["text", "tool_calls"]
+capabilities = ["text", "tool_calls", "reasoning", "reasoning_effort"]
 args = ["--jinja", "-fa", "on"]
 
 [configurations.components.perceiver]

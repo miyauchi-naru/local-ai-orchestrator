@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from .documents import DOC_SUFFIXES, DocumentError, extract_text
 from .library import Artifact
+from .orchestrator import TurnContext
 from .service import Service
 
 MAX_UPLOAD_BYTES = 4 * 1024**3
@@ -177,7 +178,8 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         pid = str((body or {}).get("project_id") or "")
         if pid:
             project_or_404(pid)
-        c = service.conversations.create(service.runtime.env.id, service.runtime.conf.id, project_id=pid)
+        c = service.conversations.create(service.runtime.env.id, service.runtime.conf.id, project_id=pid,
+                                         incognito=bool((body or {}).get("incognito")))
         return c.summary()
 
     def conv_or_404(cid: str):
@@ -228,7 +230,7 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         if (c.env_id, c.configuration) != (rt.env.id, rt.conf.id):
             # 勝手に環境を切り替えない（R07）。画面側で利用者に切り替えを確かめる
             raise HTTPException(409, f"この会話は {c.env_id.upper()}（{c.configuration}）の会話です。続けるには環境を切り替えてください")
-        from .conversations import Turn
+        from .conversations import Turn, turn_messages
 
         if body.get("regenerate"):
             while c.turns and c.turns[-1].role == "assistant":
@@ -260,20 +262,41 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         service.conversations.save(c)
         reply = Turn("assistant", "")
         settings = service.settings()
-        instructions = service.instructions_for(c.project_id)
+        use_memory = settings["memory_enabled"] and not c.incognito
+        effort = str(body.get("effort") or settings.get("effort") or "") or None
+        tc = TurnContext(instructions=service.instructions_for(c.project_id), skills=service.active_skills(),
+                         agents=service.active_agents(),
+                         memories=service.memory.for_prompt(c.project_id) if use_memory else [],
+                         allow_remember=use_memory, effort=effort)
         knowledge = []
         if c.project_id:
             try:
                 knowledge = service.projects.get(c.project_id).knowledge
             except KeyError:
                 pass
+        max_tokens = int(settings["max_tokens"])
 
         async def stream():
+            finished = False
             try:
-                all_refs = [r for r in knowledge if _exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
-                async for ev in orch.respond(c.model_messages(), list(dict.fromkeys(all_refs)),
-                                             max_tokens=int(settings["max_tokens"]), instructions=instructions,
-                                             skills=service.active_skills()):
+                refs = [r for r in knowledge if _exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
+                refs = list(dict.fromkeys(refs))
+                messages = c.model_messages()
+                # 長い会話は、前半を要約してから送る（Claude の自動要約に相当）
+                if len(c.turns) - c.digest_upto > 4:
+                    n = await orch.measure(messages, refs, tc)
+                    if n + max_tokens > orch.context_limit * 0.85:
+                        upto = len(c.turns) - 3  # 直近の 2 往復と今回の発言は残す
+                        old = turn_messages(c.turns[c.digest_upto:upto])
+                        c.digest = await orch.summarize(old, c.digest)
+                        c.digest_upto = upto
+                        service.conversations.save(c)
+                        messages = c.model_messages()
+                        msg = "会話が長くなったため、前半を要約して続けます"
+                        reply.progress.append(msg)
+                        yield json.dumps({"type": "progress", "text": msg, "data": {"summarized": upto}},
+                                         ensure_ascii=False) + "\n"
+                async for ev in orch.respond(messages, refs, max_tokens=max_tokens, tc=tc):
                     if ev.type == "text":
                         reply.content += ev.text
                     elif ev.type == "thinking":
@@ -284,16 +307,31 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
                         reply.artifacts += ev.data["refs"]
                     elif ev.type == "error":
                         reply.error = ev.text
+                    elif ev.type == "memory":
+                        service.memory.add(ev.text, c.project_id, source=c.id)
                     yield json.dumps({"type": ev.type, "text": ev.text, "data": ev.data}, ensure_ascii=False) + "\n"
+                finished = True
             except Exception as e:  # エンジン異常も会話に残す
                 reply.error = reply.error or f"止まりました：{e}"
+                finished = True
                 yield json.dumps({"type": "error", "text": reply.error, "data": {}}, ensure_ascii=False) + "\n"
             finally:
+                if not finished:  # 画面の停止ボタンで接続が切られた
+                    reply.error = reply.error or "途中で止めました"
                 c.turns.append(reply)
                 service.conversations.save(c)
             yield json.dumps({"type": "done", "title": c.title}, ensure_ascii=False) + "\n"
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+    @app.post("/api/conversations/{cid}/branch", dependencies=[Depends(auth)])
+    def branch_conversation(cid: str, body: dict):
+        c = conv_or_404(cid)
+        try:
+            n = service.conversations.branch(c, int(body.get("upto", len(c.turns) - 1)))
+        except (IndexError, ValueError, TypeError) as e:
+            raise HTTPException(400, "分岐する位置が正しくありません") from e
+        return n.summary()
 
     def _exists(ref: str) -> bool:
         try:
@@ -400,9 +438,83 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             raise HTTPException(404, "スキルがありません") from e
         return {"deleted": name}
 
+    # ------------------------------------------------------------ メモリ
+    @app.get("/api/memory", dependencies=[Depends(auth)])
+    def memory_list():
+        return {"items": [asdict(m) for m in service.memory.list()], "enabled": service.settings()["memory_enabled"]}
+
+    @app.post("/api/memory", dependencies=[Depends(auth)])
+    def memory_add(body: dict):
+        try:
+            if "import" in body:
+                return {"imported": service.memory.import_text(str(body["import"]), str(body.get("project_id", "")))}
+            return asdict(service.memory.add(str(body.get("text", "")), str(body.get("project_id", ""))))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.get("/api/memory/export", dependencies=[Depends(auth)])
+    def memory_export():
+        return Response(service.memory.export_text(), media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="memory.txt"'})
+
+    @app.patch("/api/memory/{mid}", dependencies=[Depends(auth)])
+    def memory_update(mid: str, body: dict):
+        try:
+            return asdict(service.memory.update(mid, str(body.get("text", ""))))
+        except KeyError as e:
+            raise HTTPException(404, "項目がありません") from e
+
+    @app.delete("/api/memory/{mid}", dependencies=[Depends(auth)])
+    def memory_delete(mid: str):
+        if mid == "all":
+            service.memory.clear()
+        else:
+            service.memory.delete(mid)
+        return {"deleted": mid}
+
+    # ------------------------------------------------------------ サブエージェントの役割
+    @app.get("/api/agents", dependencies=[Depends(auth)])
+    def agents():
+        return {"items": [{**a.summary(), "builtin": False} for a in service.agents.list()]
+                + [{**a.summary()} for p in service.plugins.list() for a in p.agents]}
+
+    @app.put("/api/agents/{name}", dependencies=[Depends(auth)])
+    def put_agent(name: str, body: dict):
+        from .plugins import Command, PluginError
+        a = Command(str(body.get("name", name)), str(body.get("description", "")), str(body.get("body", "")))
+        try:
+            return service.agents.save(a, rename_from=name).summary()
+        except (PluginError, KeyError) as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.delete("/api/agents/{name}", dependencies=[Depends(auth)])
+    def delete_agent(name: str):
+        try:
+            service.agents.delete(name)
+        except KeyError as e:
+            raise HTTPException(404, "担当がありません") from e
+        return {"deleted": name}
+
+    # ------------------------------------------------------------ 読み上げ（E3）
+    @app.post("/api/speak", dependencies=[Depends(auth)])
+    def speak(body: dict):
+        from .tools import ToolError, validate
+        orch = runtime_or_409()
+        rt = service.runtime
+        text = str(body.get("text", ""))[:10000]
+        try:
+            args = validate("generate_speech", {"text": text}, rt.conf, service.library)
+        except ToolError as e:
+            raise HTTPException(400, f"この環境では読み上げできません：{e}") from e
+        job = service.jobs.submit("generate_speech", rt.env.id, rt.conf.id, args, orch._runner("generate_speech", args))
+        return {"job": job.id}
+
     @app.get("/api/commands", dependencies=[Depends(auth)])
     def commands():
-        return {"items": [c.summary() for c in service.all_commands()]}
+        from .service import BUILTIN_COMMANDS
+        builtin = {c.name for c in BUILTIN_COMMANDS}
+        return {"items": [{**c.summary(), "builtin": c.name in builtin and not c.plugin}
+                          for c in service.all_commands()]}
 
     @app.put("/api/commands/{name}", dependencies=[Depends(auth)])
     def put_command(name: str, body: dict):
@@ -459,7 +571,8 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         try:
             data = export_zip(name, str(body.get("description", "")),
                               [s for s in service.skills.list() if s.name in want_s],
-                              [c for c in service.commands.list() if c.name in want_c])
+                              [c for c in service.commands.list() if c.name in want_c],
+                              service.agents.list() if body.get("agents", True) else [])
         except PluginError as e:
             raise HTTPException(400, str(e)) from e
         return Response(data, media_type="application/zip",
@@ -499,6 +612,14 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     @app.get("/api/jobs", dependencies=[Depends(auth)])
     def jobs():
         return {"jobs": [{**j.__dict__, "label": j.label} for j in service.jobs.list()[:100]]}
+
+    @app.get("/api/jobs/{job_id}", dependencies=[Depends(auth)])
+    def job(job_id: str):
+        try:
+            j = service.jobs.get(job_id)
+        except KeyError as e:
+            raise HTTPException(404, "ジョブがありません") from e
+        return {**j.__dict__, "label": j.label}
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(auth)])
     async def cancel(job_id: str):

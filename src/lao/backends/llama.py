@@ -130,6 +130,7 @@ class LlamaServer:
         *,
         tools: list[dict] | None = None,
         max_tokens: int = 2048,
+        template_kwargs: dict | None = None,
     ) -> AsyncIterator[dict]:
         """返答を少しずつ返す。{"content": 差分} / {"reasoning": 差分} を流し、最後に {"message": 全体}。
 
@@ -140,6 +141,9 @@ class LlamaServer:
         body: dict[str, Any] = {"messages": messages, "max_tokens": max_tokens, "stream": True}
         if tools:
             body["tools"] = tools
+        if template_kwargs:
+            # gpt-oss の reasoning_effort など、chat template に渡す値
+            body["chat_template_kwargs"] = template_kwargs
         content, reasoning, calls = [], [], {}
         try:
             async with self._client.stream("POST", "/v1/chat/completions", json=body) as r:

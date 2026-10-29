@@ -64,6 +64,8 @@ class FakeLlama:
         refs = REF.findall(user) or REF.findall(system)
         if "任せて" in user and "delegate_task" in names:
             return _call("delegate_task", {"task": user[:200]})
+        if "覚えて" in user and "remember" in names:
+            return _call("remember", {"text": user.replace("覚えて", "").strip("。 ")[:100]})
         skill = re.search(r"^- (\S+)：", system, re.M) if "スキル" in user else None
         if skill and "use_skill" in names:
             return _call("use_skill", {"name": skill.group(1)})
@@ -78,7 +80,7 @@ class FakeLlama:
         return _msg(f"（ダミー応答）{user[:200]}")
 
 
-    async def chat_stream(self, messages, *, tools=None, max_tokens=2048):
+    async def chat_stream(self, messages, *, tools=None, max_tokens=2048, template_kwargs=None):
         msg = (await self.chat(messages, tools=tools, max_tokens=max_tokens))["choices"][0]["message"]
         if "考えて" in _text(messages[-1]):
             msg["reasoning_content"] = "（ダミー思考）順に考えます。"

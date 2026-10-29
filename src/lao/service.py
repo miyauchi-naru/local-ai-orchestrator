@@ -12,7 +12,8 @@ from .library import Library
 from .lock import InferenceLock
 from .media import Media
 from .orchestrator import Orchestrator, SkillRef
-from .plugins import CommandStore, PluginStore
+from .plugins import Command, CommandStore, PluginStore
+from .user_memory import MemoryStore
 from .projects import ProjectStore
 from .skills import SkillStore
 from .runtime import Runtime, default_engine_factory
@@ -21,10 +22,20 @@ from .runtime import Runtime, default_engine_factory
 STYLES = {
     "standard": "",
     "concise": "要点だけを短く答えてください。",
-    "detailed": "背景や理由も含めて詳しく、順を追って説明してください。",
+    "explanatory": "背景や理由も含めて、順を追って丁寧に説明してください。",
+    "learning": "答えをすぐに渡さず、考え方を示し、利用者が自分で理解できるよう問いかけながら進めてください。",
     "formal": "丁寧な文体で、仕事の文書に使える形で答えてください。",
 }
-DEFAULT_SETTINGS = {"about_me": "", "style": "standard", "max_tokens": 2048}
+DEFAULT_SETTINGS = {"about_me": "", "style": "standard", "custom_styles": [], "max_tokens": 2048,
+                    "memory_enabled": True, "memory_sensitive": False, "effort": ""}
+BUILTIN_COMMANDS = [
+    Command("スキルを作る", "会話しながらスキル（SKILL.md）の下書きを作る",
+            "これから一緒にスキル（手順書）を作ります。作りたいもの：$ARGUMENTS\n\n"
+            "足りない情報があれば一つずつ質問し、揃ったら次の形のコードブロック（```markdown）で SKILL.md を出してください。"
+            "name は半角の小文字・数字・ハイフン、description は「いつ使うか」を一行で書きます。\n\n"
+            "---\nname: 例-meeting-notes\ndescription: 会議の記録を議事録にまとめるときに使う\n---\n\n（手順）"),
+    Command("要約", "この会話か、添付した文書を要約する", "ここまでの内容（添付があればその文書）を、要点・決まったこと・残った課題に分けて要約してください。$ARGUMENTS"),
+]
 
 
 class Service:
@@ -39,6 +50,8 @@ class Service:
         self.skills = SkillStore(root / "skills")
         self.commands = CommandStore(root / "commands")
         self.plugins = PluginStore(root / "plugins")
+        self.agents = CommandStore(root / "agents")  # サブエージェントの役割（名前・説明・指示）
+        self.memory = MemoryStore(root / "memory.json")
         self.settings_path = root / "settings.json"
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
@@ -63,6 +76,8 @@ class Service:
                     "download_gb": round(sum(x.size_gb for x in c.components.values()), 1),
                     "models": {k: x.model for k, x in c.components.items()},
                     "licenses": sorted({x.license for x in c.components.values()}),
+                    "chat_capabilities": sorted(c.components[c.chat_component].capabilities),
+                    "capabilities": sorted(c.capabilities()),
                 })
             out.append({"id": env.id, "name": env.name, "configurations": confs})
         return out
@@ -81,8 +96,17 @@ class Service:
         for k, v in patch.items():
             if k not in DEFAULT_SETTINGS:
                 continue
-            if k == "style" and v not in STYLES:
-                raise ValueError(f"style は {list(STYLES)} のいずれかです")
+            if k == "style" and v not in STYLES and not str(v).startswith("custom:"):
+                raise ValueError(f"style は {list(STYLES)} か custom:名前 です")
+            if k == "custom_styles":
+                if not isinstance(v, list) or len(v) > 20:
+                    raise ValueError("custom_styles は 20 件までの一覧です")
+                v = [{"name": str(x.get("name", ""))[:40], "text": str(x.get("text", ""))[:4000]}
+                     for x in v if isinstance(x, dict) and str(x.get("name", "")).strip()]
+            if k in ("memory_enabled", "memory_sensitive"):
+                v = bool(v)
+            if k == "effort" and v not in ("", "low", "medium", "high"):
+                raise ValueError("effort は low・medium・high か空です")
             if k == "max_tokens":
                 v = int(v)
                 if not 256 <= v <= 32768:
@@ -100,8 +124,15 @@ class Service:
                 out += [SkillRef(f"{p.name}:{s.name}", s.description, s.body) for s in p.skills if s.enabled]
         return out
 
+    def active_agents(self) -> list[SkillRef]:
+        out = [SkillRef(a.name, a.description, a.body) for a in self.agents.list()]
+        for p in self.plugins.list():
+            if p.enabled:
+                out += [SkillRef(f"{p.name}:{a.name}", a.description, a.body) for a in p.agents]
+        return out
+
     def all_commands(self) -> list:
-        out = list(self.commands.list())
+        out = list(BUILTIN_COMMANDS) + list(self.commands.list())
         for p in self.plugins.list():
             if p.enabled:
                 out += p.commands
@@ -127,8 +158,15 @@ class Service:
         parts = []
         if st.get("about_me", "").strip():
             parts.append("利用者について：" + st["about_me"].strip())
-        if STYLES.get(st.get("style", "")):
-            parts.append("応答スタイル：" + STYLES[st["style"]])
+        style = st.get("style", "")
+        if style.startswith("custom:"):
+            for cs in st.get("custom_styles", []):
+                if cs["name"] == style[7:] and cs["text"].strip():
+                    parts.append("応答スタイル：" + cs["text"].strip())
+        elif STYLES.get(style):
+            parts.append("応答スタイル：" + STYLES[style])
+        if st.get("memory_enabled") and not st.get("memory_sensitive"):
+            parts.append("健康・宗教・政治・性・犯罪歴などの機微な話題は覚えないでください。")
         if project_id:
             try:
                 p = self.projects.get(project_id)

@@ -6,6 +6,7 @@
   plugin.json            {"name", "description", "version"}
   skills/<名前>/SKILL.md
   commands/<名前>.md
+  agents/<名前>.md       サブエージェントの役割（説明と指示）
 
 プラグインは文章（手順と依頼文）だけを持つ。プログラムは取り込まず、実行もしない（外部送信を防ぐため）。
 """
@@ -111,10 +112,12 @@ class Plugin:
     enabled: bool
     skills: list[Skill]
     commands: list[Command]
+    agents: list[Command]
 
     def summary(self) -> dict:
         return {"name": self.name, "description": self.description, "version": self.version, "enabled": self.enabled,
-                "skills": [s.summary() for s in self.skills], "commands": [c.summary() for c in self.commands]}
+                "skills": [s.summary() for s in self.skills], "commands": [c.summary() for c in self.commands],
+                "agents": [a.summary() for a in self.agents]}
 
 
 class PluginStore:
@@ -138,8 +141,10 @@ class PluginStore:
                 continue
         commands = [parse_command(p.stem, p.read_text(encoding="utf-8"), folder.name)
                     for p in sorted(folder.glob("commands/*.md")) if COMMAND_RE.match(p.stem)]
+        agents = [parse_command(p.stem, p.read_text(encoding="utf-8"), folder.name)
+                  for p in sorted(folder.glob("agents/*.md")) if COMMAND_RE.match(p.stem)]
         return Plugin(folder.name, str(meta.get("description", "")), str(meta.get("version", "")),
-                      not state.exists(), skills, commands)
+                      not state.exists(), skills, commands, agents)
 
     def list(self) -> list[Plugin]:
         out = []
@@ -194,10 +199,10 @@ class PluginStore:
             parts = rel.split("/")
             ok = (rel == "plugin.json"
                   or (len(parts) == 3 and parts[0] == "skills" and NAME_RE.match(parts[1]) and parts[2] == "SKILL.md")
-                  or (len(parts) == 2 and parts[0] == "commands" and parts[1].endswith(".md")
+                  or (len(parts) == 2 and parts[0] in ("commands", "agents") and parts[1].endswith(".md")
                       and COMMAND_RE.match(parts[1][:-3])))
             if not ok:
-                raise PluginError(f"取り込めないファイル：{n}（plugin.json、skills/名前/SKILL.md、commands/名前.md だけ）")
+                raise PluginError(f"取り込めないファイル：{n}（plugin.json、skills/名前/SKILL.md、commands/名前.md、agents/名前.md だけ）")
             info = zf.getinfo(n)
             total += info.file_size
             if total > MAX_ZIP_BYTES * 4:
@@ -219,7 +224,7 @@ class PluginStore:
                 raise PluginError(f"{rel} が UTF-8 ではありません") from e
             if rel.startswith("skills/"):
                 check(parse(text))
-            elif rel.startswith("commands/"):
+            elif rel.startswith(("commands/", "agents/")):
                 check_command(parse_command(rel.split("/")[1][:-3], text, name))
         folder = self._dir(name)
         if folder.exists():
@@ -233,7 +238,8 @@ class PluginStore:
         return self._load(folder)
 
 
-def export_zip(name: str, description: str, skills: list[Skill], commands: list[Command]) -> bytes:
+def export_zip(name: str, description: str, skills: list[Skill], commands: list[Command],
+               agents: list[Command] | None = None) -> bytes:
     """自分のスキルとコマンドを 1 つのプラグインとして書き出す。"""
     if not NAME_RE.match(name):
         raise PluginError("プラグイン名は半角の小文字・数字・ハイフンで書いてください")
@@ -245,4 +251,6 @@ def export_zip(name: str, description: str, skills: list[Skill], commands: list[
             zf.writestr(f"{name}/skills/{s.name}/SKILL.md", s.to_markdown())
         for c in commands:
             zf.writestr(f"{name}/commands/{c.name}.md", c.to_markdown())
+        for a in agents or []:
+            zf.writestr(f"{name}/agents/{a.name}.md", a.to_markdown())
     return buf.getvalue()
