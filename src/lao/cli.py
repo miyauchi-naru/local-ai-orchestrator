@@ -67,8 +67,12 @@ def cmd_plan(args, execute: bool = False) -> int:
 
     config, catalog_dir = _paths(args)
     machine = load_machine(config)
-    env = load_catalog(catalog_dir)[args.env]
-    confs = [env.configurations[args.configuration]] if args.configuration else list(env.configurations.values())
+    if args.env == "embedding":  # 意味検索のモデル（環境とは別）
+        from .config import load_embedding
+        confs = [load_embedding(catalog_dir)]
+    else:
+        env = load_catalog(catalog_dir)[args.env]
+        confs = [env.configurations[args.configuration]] if args.configuration else list(env.configurations.values())
     client = httpx.Client(timeout=60, follow_redirects=True,
                           headers={"Authorization": f"Bearer {os.environ['HF_TOKEN']}"} if os.environ.get("HF_TOKEN") else {})
     rc = 0
@@ -185,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("doctor", help="設定・カタログ・機器・エンジンを点検する")
     for name, helptext in (("plan", "取得計画を表示する"), ("install", "モデルを取得する（既定は確認のみ）")):
         sp = sub.add_parser(name, help=helptext)
-        sp.add_argument("env", choices=["e1", "e2", "e3", "e4"])
+        sp.add_argument("env", choices=["e1", "e2", "e3", "e4", "embedding"])
         sp.add_argument("--configuration")
         if name == "install":
             sp.add_argument("--execute", action="store_true", help="実際に取得する")

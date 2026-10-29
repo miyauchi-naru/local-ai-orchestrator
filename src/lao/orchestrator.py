@@ -27,6 +27,7 @@ from .runtime import NotAdmitted, Runtime
 from .documents import DocumentError, best_chunks, extract_text
 from .folders import FolderError, Folders
 from .sandbox import Sandbox, SandboxError
+from .search import DocIndex
 from .tools import ToolError, tools_for, validate
 
 MAX_TOOL_ROUNDS = 4
@@ -60,6 +61,7 @@ class TurnContext:
     effort: str | None = None  # 思考の強さ（low | medium | high）。対応モデルだけに効く
     folders: Folders | None = None  # 利用者が許可した PC のフォルダ
     allow_schedule: bool = False  # 定期実行の登録を提案してよいか
+    knowledge: list[str] = field(default_factory=list)  # プロジェクトの資料（id@版）
 
 
 def use_skill_schema(skills: list[SkillRef]) -> dict:
@@ -167,6 +169,17 @@ SCHEDULE_SCHEMA = {"type": "function", "function": {
         "required": ["name", "prompt", "kind"], "additionalProperties": False}}}
 
 
+SEARCH_SCHEMA = {"type": "function", "function": {
+    "name": "search_documents",
+    "description": "手元の資料（成果物ライブラリの文書と、プロジェクトの資料）から、問いに関係する部分を探す。"
+                   "インターネットは探さない。結果は資料の題・id@版・本文の一部。答えに使うときは出典として id@版 を示す。",
+    "parameters": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "探したいこと（言葉を変えて何度も探してよい）"},
+        "scope": {"type": "string", "enum": ["all", "project"], "description": "all：ライブラリ全体、project：このプロジェクトの資料だけ"},
+        "limit": {"type": "integer", "description": "返す件数（既定 8、最大 20）"}},
+        "required": ["query"], "additionalProperties": False}}}
+
+
 def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: TurnContext | None = None,
                   query: str = "", doc_budget: int = 40000) -> str:
     tc = tc or TurnContext()
@@ -233,9 +246,10 @@ def last_user_text(messages: list[dict]) -> str:
 
 class Orchestrator:
     def __init__(self, rt: Runtime, library: Library, jobs: JobManager, media: Media, work_dir: Path, catalog_dir: Path,
-                 sandbox: Sandbox | None = None):
+                 sandbox: Sandbox | None = None, index: DocIndex | None = None):
         self.rt, self.library, self.jobs, self.media = rt, library, jobs, media
         self.sandbox = sandbox
+        self.index = index
         self.work_dir, self.catalog_dir = work_dir, catalog_dir
         gpu = rt.machine.raw.get("gpu", {})
         self.video_segment_seconds = float(gpu.get("video_segment_seconds", 5))
@@ -250,6 +264,8 @@ class Orchestrator:
     def _build(self, messages: list[dict], attachments: list[str], tc: TurnContext, depth: int):
         tools = [t.schema() for t in tools_for(self.rt.conf)]
         tools.append(CREATE_FILE_SCHEMA)
+        if self.index is not None:
+            tools.append(SEARCH_SCHEMA)
         if tc.folders:
             tools += FOLDER_SCHEMAS
         if tc.allow_schedule and depth == 0:
@@ -341,6 +357,14 @@ class Orchestrator:
                         yield Event("action", action["summary"], action)
                     else:
                         yield Event("progress", f"提案できませんでした：{result['error']}")
+                elif name == "search_documents" and self.index is not None:
+                    a = _args(raw)
+                    refs = tc.knowledge if a.get("scope") == "project" else None
+                    hits, mode = await self.index.search(str(a.get("query") or ""), refs,
+                                                         max(1, min(int(a.get("limit") or 8), 20)))
+                    result = {"ok": True, "mode": mode, "hits": [h.summary() for h in hits]}
+                    how = "キーワードと意味" if mode == "hybrid" else "キーワード"
+                    yield Event("progress", f"資料を探しました（{how}）：{a.get('query')} → {len(hits)} 件")
                 elif name == "create_file":
                     result = self._create_file(_args(raw))
                     if result["ok"]:

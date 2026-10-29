@@ -186,6 +186,14 @@ class LlamaServer:
             msg["tool_calls"] = [calls[i] for i in sorted(calls)]
         yield {"message": msg}
 
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """埋め込み（--embedding で起動したとき）。"""
+        await self.load()
+        r = await with_watchdog(self._client.post("/v1/embeddings", json={"input": texts}), self.watchdog_seconds,
+                                f"{self.name} の埋め込み")
+        r.raise_for_status()
+        return [d["embedding"] for d in sorted(r.json()["data"], key=lambda d: d["index"])]
+
     async def close(self) -> None:
         await self._client.aclose()
 

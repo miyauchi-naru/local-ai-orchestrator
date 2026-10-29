@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-ROLES = {"chat", "perceive", "image_gen", "tts", "video_gen"}
+ROLES = {"chat", "perceive", "image_gen", "tts", "video_gen", "embed"}
 ENGINES = {"llama", "comfyui", "tts", "fake"}
 QUANTIZATION = {"none", "publisher", "third_party"}
 
@@ -129,6 +129,18 @@ def _component(key: str, d: dict[str, Any], where: str) -> Component:
     )
 
 
+def load_embedding(directory: Path) -> Configuration | None:
+    """意味検索の埋め込みモデル（catalog/shared/embedding.toml）。環境とは別に一つだけ持つ。"""
+    path = directory / "shared" / "embedding.toml"
+    if not path.exists():
+        return None
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    c = data["configuration"]
+    comp = _component("embed", data["component"], f"{path.name}")
+    return Configuration(env_id="shared", id=c["id"], label=c.get("label", c["id"]),
+                         status=c.get("status", "candidate"), chat_component="embed", components={"embed": comp})
+
+
 def load_catalog(directory: Path) -> dict[str, Environment]:
     envs: dict[str, Environment] = {}
     for path in sorted(directory.glob("*.toml")):
@@ -163,6 +175,9 @@ class MachineConfig:
     @property
     def budget_gb(self) -> float:
         b = float(self.raw["memory"]["budget_gb"])
+        emb = self.raw.get("embedding", {})
+        if emb.get("enabled"):
+            b -= float(emb.get("mem_gb", 2))  # 意味検索のモデルは常駐させるので、その分を先に引く
         cap = float(self.raw["memory"].get("gpu_allocatable_gb") or 0)
         # 実測した GPU 確保上限が予算より小さければ、そちらに合わせる
         return min(b, cap) if cap > 0 else b
