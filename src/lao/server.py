@@ -372,9 +372,11 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
 
     @app.post("/api/projects", dependencies=[Depends(auth)])
     def new_project(body: dict):
-        p = service.projects.create(str(body.get("name", "")).strip()[:80] or "新しいプロジェクト")
-        project_fields(p, {k: v for k, v in body.items() if k != "name"})
-        service.projects.save(p)
+        from .projects import Project
+        p = Project("", str(body.get("name", "")).strip()[:80] or "新しいプロジェクト")
+        project_fields(p, {k: v for k, v in body.items() if k != "name"})  # 誤りがあれば作らない
+        p = service.projects.create(p.name, description=p.description, instructions=p.instructions,
+                                    knowledge=p.knowledge)
         return asdict(p)
 
     @app.get("/api/projects/{pid}", dependencies=[Depends(auth)])
@@ -497,7 +499,7 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
 
     # ------------------------------------------------------------ 読み上げ（E3）
     @app.post("/api/speak", dependencies=[Depends(auth)])
-    def speak(body: dict):
+    async def speak(body: dict):
         from .tools import ToolError, validate
         orch = runtime_or_409()
         rt = service.runtime

@@ -47,6 +47,8 @@ class FakeLlama:
                 return _msg(f"サブエージェントの結果：{res['result'][:200]}")
             if res.get("skill"):
                 return _msg(f"スキル「{res['skill']}」の手順に従って答えます。")
+            if res == {"ok": True}:
+                return _msg("覚えました。")
             if res.get("ok"):
                 text = f"できました：{', '.join(res.get('artifacts', []))}"
                 if res.get("output"):
@@ -77,6 +79,8 @@ class FakeLlama:
             return _call("generate_speech", {"text": user})
         if refs and "describe_media" in names:
             return _call("describe_media", {"ref": refs[-1], "question": user or "内容を説明して"})
+        if "コード" in user:
+            return _msg(f"（ダミー応答）{user[:200]}\n\n```html\n" + DEMO_HTML + "\n```")
         return _msg(f"（ダミー応答）{user[:200]}")
 
 
@@ -90,6 +94,13 @@ class FakeLlama:
             await asyncio.sleep(self.delay / 20)
             yield {"content": text[i:i + 8]}
         yield {"message": msg}
+
+
+DEMO_HTML = """<!doctype html>
+<html><body style="font:48px sans-serif;text-align:center">
+<div id="t"></div>
+<script>setInterval(() => document.getElementById("t").textContent = new Date().toLocaleTimeString(), 500);</script>
+</body></html>"""
 
 
 def _text(m: dict) -> str:
