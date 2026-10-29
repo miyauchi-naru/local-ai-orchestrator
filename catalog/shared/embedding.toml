@@ -1,0 +1,22 @@
+# 意味検索に使う埋め込みモデル（環境に関係なく共通）。lao plan embedding / lao install embedding で取得する。
+# 使うときは machine.toml の [embedding] で enabled = true にする（P0 でメモリと速さを測ってから）。
+[configuration]
+id = "embedding"
+label = "意味検索（埋め込み）"
+status = "candidate"
+
+[component]
+role = "embed"
+engine = "llama"
+model = "Qwen3-Embedding-0.6B"
+# 配布元（Qwen）の公式 GGUF。量子化していない f16 を使う
+source = { hub = "huggingface", repo = "Qwen/Qwen3-Embedding-0.6B-GGUF", files = ["*f16.gguf"], revision = "", sha256 = {} }   # TODO(P0): ファイル名と版を固定
+format = "gguf"
+quantization = "none"
+precision = { publisher = "F16", runtime = "F16" }
+license = "Apache-2.0"
+size_gb = 1.2
+mem = { weights_gb = 1.2, overhead_gb = 0.8 }
+context = { max = 32768, default = 8192 }
+capabilities = ["embedding"]
+args = ["--embedding", "--pooling", "last"]

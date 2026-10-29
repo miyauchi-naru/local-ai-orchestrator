@@ -597,9 +597,21 @@ async function openLibrary() {
   const items = (await getJSON("/api/library" + (state.libFilter ? `?kind=${state.libFilter}` : ""))).items;
   items.forEach((a) => artCache.set(a.ref, a));
   const cards = await Promise.all(items.slice(0, 80).map((a) => cardHTML(a.ref)));
-  $("panelBody").innerHTML = `<div class="filters">${kinds.map(([k, l]) => `<button data-filter="${k}" class="${state.libFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+  $("panelBody").innerHTML = `<input type="text" id="libQ" class="field" placeholder="文書の中身を探す（例：出張の日当）" style="margin-bottom:10px">
+    <div id="libHits"></div>
+    <div class="filters">${kinds.map(([k, l]) => `<button data-filter="${k}" class="${state.libFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
     <div class="libgrid">${cards.join("") || '<p class="muted">まだありません</p>'}</div>`;
   $("panel").classList.add("open");
+  let timer = 0;
+  $("libQ").oninput = (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = e.target.value.trim(); if (!q) { $("libHits").innerHTML = ""; return; }
+      const r = await getJSON(`/api/search?q=${encodeURIComponent(q)}`).catch(() => null); if (!r) return;
+      $("libHits").innerHTML = `<p class="small muted">${r.mode === "hybrid" ? "キーワードと意味で探しました" : "キーワードで探しました"}（${r.items.length} 件）</p>
+        <div class="list" style="margin-bottom:12px">${r.items.map((h) => `<button class="item" data-art="${esc(h.ref)}" style="text-align:left"><div class="main"><b>${esc(h.title)}</b><span class="d">${esc(h.text.slice(0, 160))}…</span></div></button>`).join("") || '<p class="muted">見つかりません</p>'}</div>`;
+    }, 300);
+  };
 }
 
 /* ---------- 環境・状態 ---------- */

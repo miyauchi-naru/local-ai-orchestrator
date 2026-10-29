@@ -84,3 +84,10 @@ user = "sandbox"
 timeout_seconds = 60
 max_timeout_seconds = 600
 memory_mb = 4096
+
+[embedding]
+# 意味検索（手元の資料を意味の近さで探す）。lao install embedding で取得し、P0 で測ってから true にする  # P0
+enabled = false
+port = 8750
+# 常駐させる分のメモリ（GB）。AI 全体の予算からこの分を引いて判定する  # P0
+mem_gb = 2

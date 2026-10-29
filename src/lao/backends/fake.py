@@ -51,6 +51,9 @@ class FakeLlama:
                 return _msg("覚えました。")
             if res.get("pending"):
                 return _msg("提案しました。画面で承認してください。")
+            if "hits" in res:
+                return _msg("見つかりました：" + "、".join(f"{h['title']}（{h['ref']}）" for h in res["hits"][:3]) if res["hits"]
+                            else "見つかりませんでした。")
             if "items" in res:
                 return _msg(f"{len(res['items'])} 件ありました。")
             if res.get("ok"):
@@ -84,6 +87,8 @@ class FakeLlama:
         if "毎朝" in user and "schedule_task" in names:
             return _call("schedule_task", {"name": "朝のまとめ", "prompt": "今日の予定をまとめて", "kind": "daily",
                                            "time": "08:00"})
+        if "資料" in user and "search_documents" in names and not refs:
+            return _call("search_documents", {"query": user, "scope": "all"})
         if "計算" in user and "run_code" in names:
             return _call("run_code", {"code": "print(sum(range(101)))\nopen('out/result.csv', 'w').write('a,b\\n1,2\\n')"})
         fmt = next((f for k, f in (("Word", "docx"), ("Excel", "xlsx"), ("スライド", "pptx"), ("PDF", "pdf"))

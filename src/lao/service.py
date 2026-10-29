@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from .conversations import Conversation, ConversationStore, Turn, turn_messages
-from .config import Environment, MachineConfig, load_catalog, missing_capabilities, check_policy
+from .config import Environment, MachineConfig, load_catalog, load_embedding, missing_capabilities, check_policy
 from .jobs import TERMINAL, JobManager
 from .library import Library
 from .lock import InferenceLock
@@ -19,6 +19,7 @@ from .plugins import Command, CommandStore, PluginStore
 from .user_memory import MemoryStore
 from .projects import ProjectStore
 from .sandbox import Sandbox, SandboxConfig
+from .search import DocIndex
 from .schedule import ScheduleError, Task, TaskStore
 from .skills import SkillStore
 from .runtime import Runtime, default_engine_factory
@@ -39,12 +40,22 @@ BUILTIN_COMMANDS = [
             "足りない情報があれば一つずつ質問し、揃ったら次の形のコードブロック（```markdown）で SKILL.md を出してください。"
             "name は半角の小文字・数字・ハイフン、description は「いつ使うか」を一行で書きます。\n\n"
             "---\nname: 例-meeting-notes\ndescription: 会議の記録を議事録にまとめるときに使う\n---\n\n（手順）"),
+    Command("リサーチ", "手元の資料（ライブラリとプロジェクトの資料）だけを調べて、出典つきの報告にまとめる",
+            "次の問いについて、手元の資料だけを使って調べ、報告書にまとめてください。問い：$ARGUMENTS\n\n"
+            "進め方：\n1. 問いをいくつかの小さな問いに分け、調べる順番を短く示す\n"
+            "2. 小さな問いごとに search_documents で探す。言い換えや別の言葉でも探し、足りなければ範囲を変えて探し直す\n"
+            "3. 量が多いときは delegate_task で担当に分けて任せ、要点と出典だけを受け取る\n"
+            "4. 見つかったことを、主張ごとに出典（[題 id@版]）を付けてまとめる。資料に無いことは推測と分かるように書き、"
+            "見つからなかったことは「見つからなかった」と書く\n"
+            "5. 最後に、結論・根拠・分からないことの順にまとめる。長くなるときは create_file で docx にもする\n"
+            "インターネットは使えません。資料にない事実を作らないでください。"),
     Command("要約", "この会話か、添付した文書を要約する", "ここまでの内容（添付があればその文書）を、要点・決まったこと・残った課題に分けて要約してください。$ARGUMENTS"),
 ]
 
 
 class Service:
-    def __init__(self, machine: MachineConfig, catalog_dir: Path, engine_factory=None, memory_probe=None):
+    def __init__(self, machine: MachineConfig, catalog_dir: Path, engine_factory=None, memory_probe=None,
+                 embedder=None):
         self.machine = machine
         self.catalog_dir = catalog_dir
         self.catalog: dict[str, Environment] = load_catalog(catalog_dir)
@@ -60,6 +71,7 @@ class Service:
         self.settings_path = root / "settings.json"
         self.root = root
         self.tasks = TaskStore(root / "tasks.json")
+        self.index = DocIndex(self.library, root / "index", embedder or self._embedder(root / "logs"))
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
         self.media = Media(ff.get("binary", "ffmpeg"), ff.get("ffprobe", "ffprobe"))
@@ -132,6 +144,19 @@ class Service:
         self.settings_path.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
         return d
 
+    def _embedder(self, log_dir: Path):
+        """意味検索のモデル。[embedding] enabled のときだけ。最初に使うときに起動する。"""
+        emb = self.machine.raw.get("embedding", {})
+        conf = load_embedding(self.catalog_dir)
+        if not emb.get("enabled") or conf is None:
+            return None
+        from .backends.llama import LlamaServer
+        comp = conf.components["embed"]
+        return LlamaServer(name="embedding", binary=self.machine["engines"]["llama"]["binary"],
+                           model_dir=self.machine.path_of("models") / conf.id / comp.key, port=int(emb.get("port", 8750)),
+                           context=int(comp.raw.get("context", {}).get("default", 8192)), log_dir=log_dir,
+                           args=list(comp.raw.get("args", [])))
+
     def folders(self) -> Folders:
         return Folders(parse_folders(self.settings().get("folders", [])), self.root / "trash")
 
@@ -144,20 +169,15 @@ class Service:
                            memories=self.memory.for_prompt(c.project_id) if use_memory else [],
                            allow_remember=use_memory,
                            effort=str(effort or settings.get("effort") or "") or None,
-                           folders=folders if folders.folders else None, allow_schedule=not c.incognito)
+                           folders=folders if folders.folders else None, allow_schedule=not c.incognito,
+                           knowledge=self._knowledge(c.project_id))
 
     async def run_turn(self, c: Conversation, reply: Turn, effort: str | None = None) -> AsyncIterator[Event]:
         """会話の続きを作る。reply を更新しながら出来事を返す（画面と定期実行で共通）。"""
         orch = self.orchestrator
         tc = self.turn_context(c, effort)
         max_tokens = int(self.settings()["max_tokens"])
-        knowledge = []
-        if c.project_id:
-            try:
-                knowledge = self.projects.get(c.project_id).knowledge
-            except KeyError:
-                pass
-        refs = [r for r in knowledge if self._exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
+        refs = [r for r in tc.knowledge if self._exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
         refs = list(dict.fromkeys(refs))
         messages = c.model_messages()
         # 長い会話は、前半を要約してから送る（Claude の自動要約に相当）
@@ -263,6 +283,12 @@ class Service:
             done.append(t)
         return done
 
+    def _knowledge(self, project_id: str) -> list[str]:
+        try:
+            return list(self.projects.get(project_id).knowledge) if project_id else []
+        except KeyError:
+            return []
+
     def _exists(self, ref: str) -> bool:
         try:
             self.library.get(ref)
@@ -349,7 +375,7 @@ class Service:
         self.runtime = Runtime(self.machine, env, env.configurations[conf_id], self._factory, lock=self.lock,
                                probe=self.memory_probe)
         self.orchestrator = Orchestrator(self.runtime, self.library, self.jobs, self.media,
-                                         self.work_dir, self.catalog_dir, self.sandbox)
+                                         self.work_dir, self.catalog_dir, self.sandbox, self.index)
         return self.runtime
 
     async def shutdown(self) -> None:

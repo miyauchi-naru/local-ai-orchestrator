@@ -665,6 +665,13 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         except (KeyError, ValueError) as e:
             raise HTTPException(404, str(e)) from e
 
+    @app.get("/api/search", dependencies=[Depends(auth)])
+    async def search_docs(q: str = "", project: str = "", limit: int = 10):
+        """手元の資料を探す（画面の検索欄）。project を渡すとそのプロジェクトの資料だけ。"""
+        refs = service._knowledge(project) if project else None
+        hits, mode = await service.index.search(q, refs, max(1, min(limit, 30)))
+        return {"mode": mode, "items": [h.summary() for h in hits]}
+
     @app.get("/api/preview/{ref}", dependencies=[Depends(auth)])
     def preview(ref: str):
         """Word・Excel・PowerPoint・PDF の中身を文字で返す（画面での確認用）。"""
