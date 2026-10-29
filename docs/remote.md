@@ -51,7 +51,7 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
    内容を見てから `-Execute` を付けて実行します。ログオン時に lao serve を起動したいときは `-AutostartServe` も付けます。
 4. ネットワークの種類が「プライベート」になっているか確かめます（パブリックのままだと SSH は通りません）。
 
-スクリプトがすること：OpenSSH サーバーの導入と自動起動、パスワードでのログイン禁止（鍵だけ）、ログインできる利用者をこの人だけにする、ファイアウォールを同じ LAN のプライベートネットワークからだけにする、公開鍵の登録、受け取り箱（`C:\lao\inbox`）の作成。
+スクリプトがすること：OpenSSH サーバーの導入と自動起動、パスワードでのログイン禁止（鍵だけ）、ログインできる利用者をこの人だけにする、ファイアウォールを同じ LAN のプライベートネットワークからだけにする、公開鍵の登録、受け取り箱（`D:\lao\inbox`）の作成。
 
 ## 準備（メイン PC 側）
 
@@ -92,8 +92,8 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
 
 ## ファイルのやりとり
 
-- メイン PC → Spark：`scp ./start.png spark:C:/lao/inbox/` の後、Claude に「start.png を取り込んで動画にして」と頼む（`import_file`）
-- Spark → メイン PC：結果に出た保存場所を `scp "spark:C:/lao/library/<id>/<ファイル名>" .` で取ってくる
+- メイン PC → Spark：`scp ./start.png spark:D:/lao/inbox/` の後、Claude に「start.png を取り込んで動画にして」と頼む（`import_file`）
+- Spark → メイン PC：結果に出た保存場所を `scp "spark:D:/lao/library/<id>/<ファイル名>" .` で取ってくる
 
 ## ComfyUI の画面をメイン PC で開く
 
@@ -109,5 +109,5 @@ ssh -N -L 8730:127.0.0.1:8730 spark
 
 - LAN に開くのは SSH だけ。lao serve と ComfyUI を 0.0.0.0 で待ち受けにしない
 - パスワードでのログインは禁止。鍵を持つメイン PC だけが入れる
-- `C:\lao\server.key`（lao serve の API キー）と `config\machine.toml` は他の利用者に読ませない
+- `D:\lao\server.key`（lao serve の API キー）と `config\machine.toml` は他の利用者に読ませない
 - 受け取り箱から取り込めるのは箱の中のファイルだけ（フォルダの外は指定できない）
