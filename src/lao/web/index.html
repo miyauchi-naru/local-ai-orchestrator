@@ -111,6 +111,11 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; heigh
 .artline .ico { width: 36px; height: 36px; border-radius: 8px; background: var(--hover); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--muted); flex: none; }
 .artline b { display: block; font-size: 14px; }
 .steps { font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding: 2px 0 2px 12px; margin: 0 0 10px; }
+.action { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--accent); border-radius: 12px; padding: 10px 12px; margin: 0 0 10px; background: var(--panel); }
+.action .main { flex: 1; min-width: 0; } .action .main b { display: block; overflow-wrap: anywhere; } .action .d { display: block; font-size: 13px; color: var(--muted); }
+.action.done, .action.rejected, .action.failed { border-color: var(--line); }
+.action pre { white-space: pre-wrap; font-size: 12px; max-height: 200px; overflow: auto; }
+.newbadge { background: var(--accent); color: #fff; border-radius: 9px; font-size: 11px; padding: 0 6px; margin-left: 6px; }
 .steps > div { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
 .steps summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
 .steps summary::-webkit-details-marker { display: none; }
@@ -257,6 +262,7 @@ dl.meta dd { margin: 0; word-break: break-word; }
       <button data-view="projects">▤ プロジェクト</button>
       <button data-view="library">▦ 成果物ライブラリ</button>
       <button data-view="customize">✦ スキル・コマンド・プラグイン</button>
+      <button data-view="tasks">⏰ 定期実行<span id="taskBadge"></span></button>
       <button data-view="settings">⚙ 設定</button>
     </div>
     <div class="convs" id="convs"></div>
@@ -774,7 +780,12 @@ function assistantHTML(t, live) {
   const steps = t.progress && t.progress.length
     ? `<details class="steps" ${live ? "open" : ""}><summary>${live ? '<span class="spin"></span>' : "▸"} ${esc(live ? t.progress[t.progress.length - 1].split("\n")[0] : `作業の記録（${t.progress.length}）`)}</summary>${t.progress.map((p) => `<div>${esc(p)}</div>`).join("")}</details>`
     : live && !t.content && !t.thinking ? `<div class="steps"><span class="spin"></span> 考えています…</div>` : "";
-  return `${think}${steps}<div class="cards"></div>${t.error ? `<div class="err">${esc(t.error)}</div>` : ""}<div class="body">${md(t.content, live)}</div>`;
+  const acts = (t.actions || []).map((a) => `<div class="action ${a.status}" data-aid="${esc(a.id)}"><div class="main"><b>${a.kind === "schedule" ? "⏰" : "📁"} ${esc(a.summary)}</b>
+    ${a.args && a.args.action === "write" ? `<details><summary class="muted">書く内容</summary><pre>${esc((a.args.content || "").slice(0, 4000))}</pre></details>` : ""}
+    ${a.kind === "schedule" ? `<span class="d">依頼文：${esc(a.args.prompt || "")}</span>` : ""}
+    <span class="d">${{ pending: "あなたの承認を待っています", done: "実行しました", rejected: "やめました", failed: "できませんでした" }[a.status]}${a.result && a.status !== "rejected" ? "：" + esc(a.result) : ""}</span></div>
+    ${a.status === "pending" && !live ? `<button class="btn primary" data-approve="1">実行する</button><button class="btn" data-approve="0">やめる</button>` : ""}</div>`).join("");
+  return `${think}${steps}${acts}<div class="cards"></div>${t.error ? `<div class="err">${esc(t.error)}</div>` : ""}<div class="body">${md(t.content, live)}</div>`;
 }
 async function fillCards(el, refs) { const box = el.querySelector(".cards"); box.innerHTML = (await Promise.all(refs.map((r) => cardHTML(r)))).join(""); }
 function scrollDown(force) { const s = $("scroll"); if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 160) s.scrollTop = s.scrollHeight; }
@@ -827,6 +838,7 @@ async function send(opts = {}) {
         else if (ev.type === "thinking") live.thinking += ev.text;
         else if (ev.type === "artifacts") { live.artifacts.push(...ev.data.refs); ev.data.refs.forEach((x) => artCache.delete(x)); await fillCards(el, live.artifacts); }
         else if (ev.type === "error") live.error = ev.text;
+        else if (ev.type === "action") (live.actions = live.actions || []).push(ev.data);
         else if (ev.type === "usage") { state.lastUsage = ev.data; showUsage(); }
         else if (ev.type === "done") c.title = ev.title;
         paint();
@@ -1106,6 +1118,81 @@ async function saveSkillFromText(text) {
   $("ieName").value = meta.name || ""; $("ieDesc").value = meta.description || ""; $("ieBody").value = m[2].trim();
 }
 
+/* ---------- AI の提案（フォルダへの書き込み・定期実行の登録） ---------- */
+async function decideAction(aid, approve, turnEl) {
+  if (!state.conv) return;
+  try {
+    const a = await getJSON(`/api/conversations/${state.conv.id}/actions/${aid}`, { method: "POST", json: { approve } });
+    const t = state.conv.turns[+turnEl.dataset.idx];
+    if (t) { t.actions = (t.actions || []).map((x) => (x.id === aid ? a : x)); turnEl.innerHTML = assistantHTML(t, false) + assistantTools(t); await fillCards(turnEl, t.artifacts || []); }
+    toast(a.status === "done" ? "実行しました" : a.status === "rejected" ? "やめました" : `できませんでした：${a.result}`);
+    if (a.kind === "schedule") pollTasks();
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------- 定期実行 ---------- */
+const TASK_KINDS = { daily: "毎日", weekdays: "平日", weekly: "毎週", once: "1 回だけ", interval: "一定の間隔" };
+async function renderTasks() {
+  showView("tasks");
+  const items = (await getJSON("/api/tasks")).items;
+  $("page").innerHTML = `<h1>定期実行</h1>
+    <p class="muted">決まった時刻に AI へ依頼を送り、結果を新しい会話に残します。PC とこのツールが動いている間だけ実行します。登録した環境が選ばれていないときは、切り替えずに見送ります。</p>
+    <div class="actions"><button class="btn primary" data-newtask>作業を追加</button></div>
+    <div class="list" style="margin-top:12px">${items.map((t) => `<div class="item"><div class="main"><b>${esc(t.name)}${t.unread ? '<span class="newbadge">新着</span>' : ""}</b>
+      <span class="d">${esc(t.label)}・${t.env_id.toUpperCase()}・${t.enabled && t.next_run ? "次は " + fmtDate(t.next_run) : "止めています"}</span>
+      <span class="d">${t.last_run ? `前回 ${fmtDate(t.last_run)}：${esc(t.last_status)}` : "まだ実行していません"}</span></div>
+      ${t.last_conversation ? `<button class="btn" data-task="${t.id}" data-op="open">結果を見る</button>` : ""}
+      <button class="btn" data-task="${t.id}" data-op="run">今すぐ実行</button>
+      <label class="toggle"><input type="checkbox" data-tasktoggle="${t.id}" ${t.enabled ? "checked" : ""}>オン</label>
+      <button class="btn" data-task="${t.id}" data-op="edit">編集</button><button class="btn danger" data-task="${t.id}" data-op="del">削除</button></div>`).join("") || '<p class="muted">まだありません。会話で「毎朝 8 時に〜して」と頼んでも登録できます。</p>'}</div>`;
+  state._tasks = items;
+}
+async function taskAction(id, op) {
+  const t = (state._tasks || []).find((x) => x.id === id); if (!t) return;
+  if (op === "open") { await api(`/api/tasks/${id}`, { method: "PATCH", json: { unread: false } }); pollTasks(); return openConv(t.last_conversation); }
+  if (op === "edit") return taskEditor(t);
+  if (op === "del") { if (await confirmBox("作業を削除しますか？", t.name, "削除")) { await api(`/api/tasks/${id}`, { method: "DELETE" }); renderTasks(); } return; }
+  if (op === "run") { toast("実行しています…"); try { const r = await getJSON(`/api/tasks/${id}/run`, { method: "POST" }); toast(r.last_status); } catch (e) { toast(e.message); } renderTasks(); pollTasks(); loadConvs(); }
+}
+function taskEditor(t) {
+  const v = t || { name: "", prompt: "", kind: "daily", time: "09:00", weekday: 0, date: "", every_minutes: 60 };
+  dialog(`<h2>作業を${t ? "編集" : "追加"}</h2><div class="form">
+    <label>名前<input type="text" id="tkName" value="${esc(v.name)}"></label>
+    <label>AI への依頼文（その時刻に送ります）<textarea class="field" id="tkPrompt" rows="5">${esc(v.prompt)}</textarea></label>
+    <label>繰り返し<select class="field" id="tkKind">${Object.entries(TASK_KINDS).map(([k, l]) => `<option value="${k}" ${v.kind === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <div class="row2"><label>時刻<input type="time" id="tkTime" value="${esc(v.time)}"></label>
+    <label>曜日（毎週）<select class="field" id="tkWd">${[..."月火水木金土日"].map((d, i) => `<option value="${i}" ${v.weekday === i ? "selected" : ""}>${d}</option>`).join("")}</select></label>
+    <label>日付（1 回だけ）<input type="date" id="tkDate" value="${esc(v.date)}"></label>
+    <label>間隔（分）<input type="text" id="tkEvery" value="${v.every_minutes}" style="max-width:90px"></label></div>
+    ${t ? "" : `<p class="small muted">いま選んでいる環境（${(activeKey() || "未選択").split("|")[0].toUpperCase()}）で実行します。</p>`}</div>
+    <div class="actions"><button class="btn" id="tkNo">やめる</button><button class="btn primary" id="tkOk">保存</button></div>`, (d) => {
+    d.querySelector("#tkNo").onclick = closeDialog;
+    d.querySelector("#tkOk").onclick = async () => {
+      const j = { name: $("tkName").value.trim(), prompt: $("tkPrompt").value.trim(), kind: $("tkKind").value, time: $("tkTime").value,
+        weekday: +$("tkWd").value, date: $("tkDate").value, every_minutes: parseInt($("tkEvery").value, 10) || 60 };
+      try { await api(t ? `/api/tasks/${t.id}` : "/api/tasks", { method: t ? "PATCH" : "POST", json: j }); closeDialog(); toast("保存しました"); renderTasks(); }
+      catch (e) { toast(e.message); }
+    };
+  });
+}
+let seenTaskRuns = null;
+async function pollTasks() {
+  let items; try { items = (await getJSON("/api/tasks")).items; } catch (e) { return; }
+  const unread = items.filter((t) => t.unread).length;
+  $("taskBadge").innerHTML = unread ? `<span class="newbadge">${unread}</span>` : "";
+  const runs = Object.fromEntries(items.map((t) => [t.id, t.last_run]));
+  if (seenTaskRuns) {
+    for (const t of items) {
+      if (t.last_run && t.last_run !== seenTaskRuns[t.id]) {
+        toast(`定期実行「${t.name}」：${t.last_status}`); loadConvs();
+        if (store("lao-notify") === "1" && "Notification" in window && Notification.permission === "granted") new Notification(`定期実行：${t.name}`, { body: t.last_status, icon: "/icon.svg" });
+      }
+    }
+  }
+  seenTaskRuns = runs;
+}
+setInterval(pollTasks, 60000);
+
 /* ---------- 設定 ---------- */
 async function renderSettings() {
   showView("settings");
@@ -1127,6 +1214,10 @@ async function renderSettings() {
     <label class="toggle"><input type="checkbox" id="stSens" ${s.memory_sensitive ? "checked" : ""}>健康などの機微な話題も覚えてよい</label>
     <div class="list" style="margin-top:10px">${mem.items.map((m) => `<div class="item"><div class="main"><span>${esc(m.text)}</span><span class="d">${m.project_id ? "プロジェクト：" + esc((state.projects.find((p) => p.id === m.project_id) || {}).name || m.project_id) + "・" : ""}${fmtDate(m.created_at)}</span></div><button class="btn" data-memedit="${m.id}">編集</button><button class="btn danger" data-memdel="${m.id}">削除</button></div>`).join("") || '<p class="muted">まだ何も覚えていません</p>'}</div>
     <div class="actions" style="margin-top:8px"><button class="btn" id="memAdd">項目を追加</button><button class="btn" id="memImport">取り込む（貼り付け）</button><button class="btn" id="memExport">書き出す</button><button class="btn danger" id="memClear">すべて消す</button></div>
+    <h2>フォルダ</h2><p class="small muted">AI が読める PC のフォルダです。書き込み・移動・削除は、AI が提案し、あなたが「実行する」を押したときだけ行います。削除はごみ箱（lao のフォルダ）へ移すだけです。</p>
+    <div class="list">${(s.folders || []).map((f, i) => `<div class="item"><div class="main"><b>${esc(f.path)}</b><span class="d">${f.write ? "読み書き" : "読むだけ"}</span></div>
+      <button class="btn" data-fwrite="${i}">${f.write ? "読むだけにする" : "書き込みも許可"}</button><button class="btn danger" data-frm="${i}">外す</button></div>`).join("") || '<p class="muted">まだありません</p>'}</div>
+    <div class="actions" style="margin-top:8px"><button class="btn" id="stAddFolder">フォルダを許可（パスを入力）</button></div>
     <h2>外観</h2>
     <div class="row2"><span class="seg" id="stTheme">${[["system", "システム"], ["light", "ライト"], ["dark", "ダーク"]].map(([k, l]) => `<button data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</span>
     <span class="seg" id="stFs">${[["14", "小"], ["15", "中"], ["17", "大"]].map(([k, l]) => `<button data-fs="${k}" class="${fs === k ? "on" : ""}">${l}</button>`).join("")}</span></div>
@@ -1159,10 +1250,19 @@ async function renderSettings() {
   $("memAdd").onclick = async () => { const t = await promptBox("覚えておくこと", ""); if (!t) return; await api("/api/memory", { method: "POST", json: { text: t } }); renderSettings(); };
   $("memImport").onclick = async () => { const t = await promptBox("取り込む内容（1行に1項目。他の AI から書き出したものを貼り付け）", "", "取り込む", true); if (!t) return; const r = await getJSON("/api/memory", { method: "POST", json: { import: t } }); toast(`${r.imported} 件取り込みました`); renderSettings(); };
   $("memExport").onclick = () => download("/api/memory/export", "memory.txt");
+  $("stAddFolder").onclick = async () => {
+    const path = await promptBox("許可するフォルダのパス（例：C:\\Users\\あなた\\Documents\\仕事）", ""); if (!path) return;
+    if (await saveSettings({ folders: [...(s.folders || []), { path: path.trim(), write: false }] })) renderSettings();
+  };
   $("memClear").onclick = async () => { if (await confirmBox("メモリをすべて消しますか？", "元に戻せません。", "すべて消す")) { await api("/api/memory/all", { method: "DELETE" }); renderSettings(); } };
   $("page").onclick = async (e) => {
-    const b = e.target.closest("[data-memdel],[data-memedit],[data-rmstyle]"); if (!b) return;
-    if (b.dataset.memdel) { await api(`/api/memory/${b.dataset.memdel}`, { method: "DELETE" }); renderSettings(); }
+    const b = e.target.closest("[data-memdel],[data-memedit],[data-rmstyle],[data-fwrite],[data-frm]"); if (!b) return;
+    if (b.dataset.fwrite || b.dataset.frm) {
+      const fs = (s.folders || []).map((f) => ({ ...f }));
+      if (b.dataset.frm) fs.splice(+b.dataset.frm, 1); else fs[+b.dataset.fwrite].write = !fs[+b.dataset.fwrite].write;
+      if (await saveSettings({ folders: fs })) renderSettings();
+    }
+    else if (b.dataset.memdel) { await api(`/api/memory/${b.dataset.memdel}`, { method: "DELETE" }); renderSettings(); }
     else if (b.dataset.memedit) { const m = mem.items.find((x) => x.id === b.dataset.memedit); const t = await promptBox("編集", m.text); if (t) { await api(`/api/memory/${m.id}`, { method: "PATCH", json: { text: t } }); renderSettings(); } }
     else { const cs = s.custom_styles.filter((_, i) => i !== +b.dataset.rmstyle); const patch = { custom_styles: cs }; if (s.style === `custom:${s.custom_styles[+b.dataset.rmstyle].name}`) patch.style = "standard"; if (await saveSettings(patch)) renderSettings(); }
   };
@@ -1183,8 +1283,11 @@ $("fixbar").onmousedown = (e) => { e.preventDefault(); const t = $("fixbar")._te
 /* ---------- 操作 ---------- */
 function closeSideMobile() { $("app").classList.remove("side-open"); }
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-art],[data-use],[data-drop],[data-conv],[data-convmenu],[data-env],[data-filter],[data-code],[data-copycode],[data-skillsave],[data-act],[data-view],[data-proj],[data-ctab],[data-newitem],[data-edititem],[data-delitem],[data-skilltoggle],[data-plugtoggle],[data-delplug],[data-cmd],[data-addknow]");
+  const t = ev.target.closest("[data-art],[data-use],[data-drop],[data-conv],[data-convmenu],[data-env],[data-filter],[data-code],[data-copycode],[data-skillsave],[data-act],[data-view],[data-proj],[data-ctab],[data-newitem],[data-edititem],[data-delitem],[data-skilltoggle],[data-plugtoggle],[data-delplug],[data-cmd],[data-addknow],[data-approve],[data-task],[data-newtask]");
   if (!t) return;
+  if (t.dataset.approve) return decideAction(t.closest(".action").dataset.aid, t.dataset.approve === "1", t.closest(".turn"));
+  if (t.dataset.newtask !== undefined) return taskEditor(null);
+  if (t.dataset.task) return taskAction(t.dataset.task, t.dataset.op);
   if (t.dataset.convmenu) { ev.stopPropagation(); const r = t.getBoundingClientRect(); return convMenu(t.dataset.convmenu, r.left, r.bottom); }
   if (t.dataset.art) { ev.preventDefault(); const ref = (t.dataset.art.match(/[0-9a-f]{12}@\d+/) || [])[0]; return ref && openArtifact(ref); }
   if (t.dataset.use) { if (!state.attachments.includes(t.dataset.use)) state.attachments.push(t.dataset.use); renderChips(); showView("chat"); toast("添付しました"); return; }
@@ -1197,7 +1300,7 @@ document.addEventListener("click", async (ev) => {
   if (t.dataset.copycode) return copyText(codeStore[+t.dataset.copycode].code);
   if (t.dataset.skillsave) return saveSkillFromText(codeStore[+t.dataset.skillsave].code.trim());
   if (t.dataset.act) return turnAction(t.dataset.act, t.closest(".turn"));
-  if (t.dataset.view) { const v = t.dataset.view; if (v === "library") return openLibrary(); if (v === "projects") return renderProjects(); if (v === "customize") return renderCustomize(); if (v === "settings") return renderSettings(); }
+  if (t.dataset.view) { const v = t.dataset.view; if (v === "library") return openLibrary(); if (v === "projects") return renderProjects(); if (v === "customize") return renderCustomize(); if (v === "settings") return renderSettings(); if (v === "tasks") return renderTasks(); }
   if (t.dataset.proj) return renderProject(t.dataset.proj);
   if (t.dataset.ctab) return renderCustomize(t.dataset.ctab);
   if (t.dataset.newitem) return itemEditor(t.dataset.newitem, null);
@@ -1209,6 +1312,7 @@ document.addEventListener("click", async (ev) => {
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.dataset.skilltoggle) { const s = state._items.find((x) => x.name === t.dataset.skilltoggle); await api(`/api/skills/${encodeURIComponent(s.name)}`, { method: "PUT", json: { ...s, enabled: t.checked } }); toast(t.checked ? "オンにしました" : "オフにしました"); }
+  if (t.dataset.tasktoggle) { await api(`/api/tasks/${t.dataset.tasktoggle}`, { method: "PATCH", json: { enabled: t.checked } }); renderTasks(); }
   if (t.dataset.plugtoggle) { await api(`/api/plugins/${t.dataset.plugtoggle}`, { method: "PATCH", json: { enabled: t.checked } }); loadCommands(); toast(t.checked ? "オンにしました" : "オフにしました"); }
 });
 $("envPick").onchange = async (e) => { if (await switchEnv(e.target.value)) newChat({ projectId: state.projectId, ghost: state.ghost }); };
@@ -1252,7 +1356,7 @@ document.addEventListener("paste", (e) => { if (state.view !== "chat") return; c
 addEventListener("beforeunload", (e) => { if (state.conv && state.conv.incognito && state.conv.turns.length) { e.preventDefault(); e.returnValue = ""; } });
 
 async function boot() {
-  await refreshStatus(); await Promise.all([loadConvs(), loadSettings(), loadCommands()]); renderThread();
+  await refreshStatus(); await Promise.all([loadConvs(), loadSettings(), loadCommands()]); renderThread(); pollTasks();
 }
 const qs = new URLSearchParams(location.search);
 if (qs.get("key")) { store("lao-key", qs.get("key")); history.replaceState(null, "", "/"); }

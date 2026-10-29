@@ -25,6 +25,7 @@ from .media import Media, audio_part, image_part, segment_message, video_part
 from .memory import kv_cache_gb
 from .runtime import NotAdmitted, Runtime
 from .documents import DocumentError, best_chunks, extract_text
+from .folders import FolderError, Folders
 from .sandbox import Sandbox, SandboxError
 from .tools import ToolError, tools_for, validate
 
@@ -57,6 +58,8 @@ class TurnContext:
     memories: list[str] = field(default_factory=list)
     allow_remember: bool = False
     effort: str | None = None  # 思考の強さ（low | medium | high）。対応モデルだけに効く
+    folders: Folders | None = None  # 利用者が許可した PC のフォルダ
+    allow_schedule: bool = False  # 定期実行の登録を提案してよいか
 
 
 def use_skill_schema(skills: list[SkillRef]) -> dict:
@@ -121,6 +124,49 @@ RUN_CODE_SCHEMA = {"type": "function", "function": {
         "required": ["code"], "additionalProperties": False}}}
 
 
+FOLDER_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "folder_list",
+        "description": "許可された PC のフォルダの中身（ファイルとフォルダ）を一覧する。",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "フォルダのパス"},
+            "recursive": {"type": "boolean", "description": "下のフォルダまで見るか"}},
+            "required": ["path"], "additionalProperties": False}}},
+    {"type": "function", "function": {
+        "name": "folder_read",
+        "description": "許可された PC のフォルダのファイルを読む。文書（テキスト・PDF・Office）は中身の文字を返す。"
+                       "画像・音声・動画は成果物として取り込み、id@版 を返す（中身は describe_media で確かめる）。",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
+                       "required": ["path"], "additionalProperties": False}}},
+    {"type": "function", "function": {
+        "name": "folder_change",
+        "description": "PC のフォルダへの書き込み・成果物の保存・移動・削除を提案する。実行は利用者が画面で承認したときだけ行われる。"
+                       "action=write は content を path に書く。save は成果物 ref を path（フォルダかファイル名）に保存する。"
+                       "move は path を to に移す。delete は path を lao のごみ箱に移す。",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["write", "save", "move", "delete"]},
+            "path": {"type": "string"},
+            "content": {"type": "string"}, "ref": {"type": "string"}, "to": {"type": "string"},
+            "overwrite": {"type": "boolean"},
+            "reason": {"type": "string", "description": "利用者に見せる一言の理由"}},
+            "required": ["action", "path"], "additionalProperties": False}}},
+]
+
+SCHEDULE_SCHEMA = {"type": "function", "function": {
+    "name": "schedule_task",
+    "description": "決まった時刻に依頼を実行する作業の登録を提案する（PC とこのツールが動いている間だけ実行される）。"
+                   "登録は利用者が画面で承認したときに行われる。結果は新しい会話として残る。",
+    "parameters": {"type": "object", "properties": {
+        "name": {"type": "string", "description": "作業の名前"},
+        "prompt": {"type": "string", "description": "その時刻に AI へ送る依頼文（それだけで分かるように書く）"},
+        "kind": {"type": "string", "enum": ["once", "daily", "weekdays", "weekly", "interval"]},
+        "time": {"type": "string", "description": "HH:MM（24 時間）"},
+        "weekday": {"type": "integer", "description": "weekly のとき 0=月 … 6=日"},
+        "date": {"type": "string", "description": "once のとき YYYY-MM-DD"},
+        "every_minutes": {"type": "integer", "description": "interval のとき（15 以上）"}},
+        "required": ["name", "prompt", "kind"], "additionalProperties": False}}}
+
+
 def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: TurnContext | None = None,
                   query: str = "", doc_budget: int = 40000) -> str:
     tc = tc or TurnContext()
@@ -160,6 +206,10 @@ def system_prompt(rt: Runtime, attachments: list[str], library: Library, tc: Tur
     if tc.memories:
         lines.append("利用者について覚えていること（古い可能性があります）：")
         lines += [f"- {m}" for m in tc.memories]
+    if tc.folders:
+        lines.append("利用者が許可した PC のフォルダ（folder_list・folder_read で見られる。書き込み・移動・削除は folder_change で提案し、"
+                     "利用者の承認を待つ）：")
+        lines += [f"- {d}" for d in tc.folders.describe()]
     if tc.skills:
         lines.append("使えるスキル（依頼が説明に合うときは、答える前に use_skill で本文を読み込んでください）：")
         lines += [f"- {k.name}：{k.description}" + ("（ファイル付き。run_code の skill に名前を渡すと /work/skill/ で使える）" if k.files_dir else "")
@@ -200,6 +250,10 @@ class Orchestrator:
     def _build(self, messages: list[dict], attachments: list[str], tc: TurnContext, depth: int):
         tools = [t.schema() for t in tools_for(self.rt.conf)]
         tools.append(CREATE_FILE_SCHEMA)
+        if tc.folders:
+            tools += FOLDER_SCHEMAS
+        if tc.allow_schedule and depth == 0:
+            tools.append(SCHEDULE_SCHEMA)
         if self.sandbox and self.sandbox.conf.enabled:
             tools.append(RUN_CODE_SCHEMA)
         if tc.skills:
@@ -276,6 +330,17 @@ class Orchestrator:
                     result = {"ok": False, "error": "実行できませんでした"}
                     async for ev in self._run_code(_args(raw), tc, result):
                         yield ev
+                elif name in ("folder_list", "folder_read") and tc.folders:
+                    result = self._folder_read(name, _args(raw), tc.folders)
+                    yield Event("progress", result.pop("_progress"))
+                    if result.get("artifacts"):
+                        yield Event("artifacts", data={"refs": result["artifacts"]})
+                elif name in ("folder_change", "schedule_task"):
+                    result, action = self._propose(name, _args(raw), tc)
+                    if action:
+                        yield Event("action", action["summary"], action)
+                    else:
+                        yield Event("progress", f"提案できませんでした：{result['error']}")
                 elif name == "create_file":
                     result = self._create_file(_args(raw))
                     if result["ok"]:
@@ -380,6 +445,65 @@ class Orchestrator:
             yield Event("artifacts", data={"refs": refs})
         result.clear()
         result.update({"ok": res.exit_code == 0, **res.summary(), "artifacts": refs})
+
+    def _folder_read(self, name: str, a: dict, folders: Folders) -> dict:
+        from .documents import MEDIA_LIKE, clip
+        path = str(a.get("path") or "")
+        try:
+            if name == "folder_list":
+                items = folders.list(path, bool(a.get("recursive")))
+                return {"ok": True, "items": items, "_progress": f"フォルダを見ました：{path}（{len(items)} 件）"}
+            p = folders.resolve(path)
+            if not p.is_file():
+                raise FolderError(f"{path} はファイルではありません")
+            if p.suffix.lower() in MEDIA_LIKE:
+                art = self.library.add_file(p, env_id=self.rt.env.id, configuration=self.rt.conf.id, title=p.name,
+                                            generation={"source": str(p)})
+                return {"ok": True, "ref": art.ref, "artifacts": [art.ref],
+                        "_progress": f"ファイルを取り込みました：{p.name}"}
+            text, cut = clip(extract_text(p), 30000)
+            return {"ok": True, "text": text, "truncated": cut, "_progress": f"ファイルを読みました：{p}"}
+        except (FolderError, DocumentError, OSError) as e:
+            return {"ok": False, "error": str(e), "_progress": f"読めませんでした：{e}"}
+
+    def _propose(self, name: str, a: dict, tc: TurnContext) -> tuple[dict, dict | None]:
+        """書き込みや登録は、ここでは行わずに提案だけを作る。利用者が画面で承認すると行われる。"""
+        aid = uuid.uuid4().hex[:12]
+        try:
+            if name == "schedule_task":
+                from .schedule import Task, check
+                if not tc.allow_schedule:
+                    raise ValueError("この会話では登録できません")
+                args = {k: a[k] for k in ("name", "prompt", "kind", "time", "weekday", "date", "every_minutes") if k in a}
+                args.update(env_id=self.rt.env.id, configuration=self.rt.conf.id)
+                t = Task(id="", **args)
+                check(t)
+                summary = f"定期実行を登録：{t.name}（{t.label()}）"
+            else:
+                if not tc.folders:
+                    raise FolderError("使えるフォルダがありません")
+                act = a.get("action")
+                target = tc.folders.resolve(str(a.get("path") or ""), write=True)
+                args = {k: a[k] for k in ("action", "path", "content", "ref", "to", "overwrite") if k in a}
+                args["path"] = str(target)
+                if act == "save":
+                    self.library.get(str(a.get("ref") or ""))
+                if act == "move":
+                    args["to"] = str(tc.folders.resolve(str(a.get("to") or ""), write=True))
+                if act == "write" and not isinstance(a.get("content"), str):
+                    raise FolderError("content がありません")
+                verb = {"write": "書き込み", "save": "成果物を保存", "move": "移動", "delete": "ごみ箱へ移す"}.get(act)
+                if not verb:
+                    raise FolderError("action は write・save・move・delete です")
+                summary = f"{verb}：{target}" + (f" → {args['to']}" if act == "move" else "")
+                if a.get("reason"):
+                    summary += f"（{str(a['reason'])[:200]}）"
+        except (FolderError, KeyError, ValueError, TypeError) as e:
+            return {"ok": False, "error": str(e) or "成果物がありません"}, None
+        action = {"id": aid, "kind": "schedule" if name == "schedule_task" else "folder", "summary": summary,
+                  "args": args, "status": "pending", "result": ""}
+        return {"ok": True, "pending": True,
+                "message": "利用者の承認待ちです。まだ実行されていません。承認されたかどうかは画面に出るので、実行済みとは言わないでください"}, action
 
     def _create_file(self, a: dict) -> dict:
         from .office import OfficeError, render

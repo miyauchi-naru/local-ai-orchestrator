@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -44,7 +45,9 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     key = api_key or service.machine["server"].get("api_key") or secrets.token_urlsafe(24)
     @asynccontextmanager
     async def lifespan(_app):
+        ticker = asyncio.create_task(service.scheduler())  # 定期実行
         yield
+        ticker.cancel()
         await service.shutdown()
 
     app = FastAPI(title="local-ai-orchestrator", lifespan=lifespan)
@@ -230,7 +233,7 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         if (c.env_id, c.configuration) != (rt.env.id, rt.conf.id):
             # 勝手に環境を切り替えない（R07）。画面側で利用者に切り替えを確かめる
             raise HTTPException(409, f"この会話は {c.env_id.upper()}（{c.configuration}）の会話です。続けるには環境を切り替えてください")
-        from .conversations import Turn, turn_messages
+        from .conversations import Turn
 
         if body.get("regenerate"):
             while c.turns and c.turns[-1].role == "assistant":
@@ -261,54 +264,12 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
                 c.title = text.splitlines()[0][:40]
         service.conversations.save(c)
         reply = Turn("assistant", "")
-        settings = service.settings()
-        use_memory = settings["memory_enabled"] and not c.incognito
-        effort = str(body.get("effort") or settings.get("effort") or "") or None
-        tc = TurnContext(instructions=service.instructions_for(c.project_id), skills=service.active_skills(),
-                         agents=service.active_agents(),
-                         memories=service.memory.for_prompt(c.project_id) if use_memory else [],
-                         allow_remember=use_memory, effort=effort)
-        knowledge = []
-        if c.project_id:
-            try:
-                knowledge = service.projects.get(c.project_id).knowledge
-            except KeyError:
-                pass
-        max_tokens = int(settings["max_tokens"])
+        effort = str(body.get("effort") or "") or None
 
         async def stream():
             finished = False
             try:
-                refs = [r for r in knowledge if _exists(r)] + [r for t in c.turns for r in t.attachments + t.artifacts]
-                refs = list(dict.fromkeys(refs))
-                messages = c.model_messages()
-                # 長い会話は、前半を要約してから送る（Claude の自動要約に相当）
-                if len(c.turns) - c.digest_upto > 4:
-                    n = await orch.measure(messages, refs, tc)
-                    if n + max_tokens > orch.context_limit * 0.85:
-                        upto = len(c.turns) - 3  # 直近の 2 往復と今回の発言は残す
-                        old = turn_messages(c.turns[c.digest_upto:upto])
-                        c.digest = await orch.summarize(old, c.digest)
-                        c.digest_upto = upto
-                        service.conversations.save(c)
-                        messages = c.model_messages()
-                        msg = "会話が長くなったため、前半を要約して続けます"
-                        reply.progress.append(msg)
-                        yield json.dumps({"type": "progress", "text": msg, "data": {"summarized": upto}},
-                                         ensure_ascii=False) + "\n"
-                async for ev in orch.respond(messages, refs, max_tokens=max_tokens, tc=tc):
-                    if ev.type == "text":
-                        reply.content += ev.text
-                    elif ev.type == "thinking":
-                        reply.thinking += ev.text
-                    elif ev.type == "progress":
-                        reply.progress.append(ev.text)
-                    elif ev.type == "artifacts":
-                        reply.artifacts += ev.data["refs"]
-                    elif ev.type == "error":
-                        reply.error = ev.text
-                    elif ev.type == "memory":
-                        service.memory.add(ev.text, c.project_id, source=c.id)
+                async for ev in service.run_turn(c, reply, effort):
                     yield json.dumps({"type": ev.type, "text": ev.text, "data": ev.data}, ensure_ascii=False) + "\n"
                 finished = True
             except Exception as e:  # エンジン異常も会話に残す
@@ -339,6 +300,72 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             return True
         except (KeyError, ValueError):
             return False
+
+    @app.post("/api/conversations/{cid}/actions/{aid}", dependencies=[Depends(auth)])
+    def decide_action(cid: str, aid: str, body: dict):
+        """AI が提案した操作（フォルダへの書き込み・定期実行の登録）を、利用者が承認するかやめる。"""
+        c = conv_or_404(cid)
+        try:
+            return service.apply_action(c, aid, bool(body.get("approve")))
+        except KeyError as e:
+            raise HTTPException(404, "提案がありません") from e
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+
+    # ------------------------------------------------------------ 定期実行
+    def task_json(t) -> dict:
+        return {**asdict(t), "label": t.label()}
+
+    def task_or_404(tid: str):
+        try:
+            return service.tasks.get(tid)
+        except KeyError as e:
+            raise HTTPException(404, "作業がありません") from e
+
+    @app.get("/api/tasks", dependencies=[Depends(auth)])
+    def tasks():
+        return {"items": [task_json(t) for t in service.tasks.list()]}
+
+    @app.post("/api/tasks", dependencies=[Depends(auth)])
+    def new_task(body: dict):
+        from .schedule import ScheduleError, Task
+        rt = service.runtime
+        fields = {k: body[k] for k in ("name", "prompt", "kind", "time", "weekday", "date", "every_minutes",
+                                       "project_id", "enabled") if k in body}
+        fields.setdefault("env_id", body.get("env_id") or (rt.env.id if rt else ""))
+        fields.setdefault("configuration", body.get("configuration") or (rt.conf.id if rt else ""))
+        if fields["env_id"] not in service.catalog:
+            raise HTTPException(400, "環境を選んでください")
+        try:
+            return task_json(service.tasks.save(Task(id=uuid.uuid4().hex[:12], **fields)))
+        except (ScheduleError, TypeError) as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.patch("/api/tasks/{tid}", dependencies=[Depends(auth)])
+    def update_task(tid: str, body: dict):
+        from .schedule import ScheduleError
+        t = task_or_404(tid)
+        for k in ("name", "prompt", "kind", "time", "weekday", "date", "every_minutes", "enabled", "unread"):
+            if k in body:
+                setattr(t, k, body[k])
+        try:
+            return task_json(service.tasks.save(t, reschedule=set(body) != {"unread"}))
+        except (ScheduleError, TypeError, ValueError) as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.delete("/api/tasks/{tid}", dependencies=[Depends(auth)])
+    def delete_task(tid: str):
+        task_or_404(tid)
+        service.tasks.delete(tid)
+        return {"deleted": tid}
+
+    @app.post("/api/tasks/{tid}/run", dependencies=[Depends(auth)])
+    async def run_task_now(tid: str):
+        t = task_or_404(tid)
+        t.last_status = await service.run_task(t)
+        t.last_run, t.unread = time.time(), True
+        service.tasks.save(t, reschedule=False)
+        return task_json(t)
 
     # ------------------------------------------------------------ プロジェクト
     def project_or_404(pid: str):

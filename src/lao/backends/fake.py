@@ -49,6 +49,10 @@ class FakeLlama:
                 return _msg(f"スキル「{res['skill']}」の手順に従って答えます。")
             if res == {"ok": True}:
                 return _msg("覚えました。")
+            if res.get("pending"):
+                return _msg("提案しました。画面で承認してください。")
+            if "items" in res:
+                return _msg(f"{len(res['items'])} 件ありました。")
             if res.get("ok"):
                 text = f"できました：{', '.join(res.get('artifacts', []))}"
                 if res.get("output") or res.get("stdout"):
@@ -71,6 +75,15 @@ class FakeLlama:
         skill = re.search(r"^- (\S+)：", system, re.M) if "スキル" in user else None
         if skill and "use_skill" in names:
             return _call("use_skill", {"name": skill.group(1)})
+        folder = re.search(r"^- (.+?)（読み", system, re.M)
+        if folder and "フォルダ" in user and "folder_list" in names:
+            if "書いて" in user:
+                return _call("folder_change", {"action": "write", "path": f"{folder.group(1)}/メモ.txt",
+                                               "content": "ダミーのメモ", "reason": "頼まれたため"})
+            return _call("folder_list", {"path": folder.group(1)})
+        if "毎朝" in user and "schedule_task" in names:
+            return _call("schedule_task", {"name": "朝のまとめ", "prompt": "今日の予定をまとめて", "kind": "daily",
+                                           "time": "08:00"})
         if "計算" in user and "run_code" in names:
             return _call("run_code", {"code": "print(sum(range(101)))\nopen('out/result.csv', 'w').write('a,b\\n1,2\\n')"})
         fmt = next((f for k, f in (("Word", "docx"), ("Excel", "xlsx"), ("スライド", "pptx"), ("PDF", "pdf"))
