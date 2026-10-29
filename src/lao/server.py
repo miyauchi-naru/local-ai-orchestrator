@@ -63,7 +63,7 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         return service.orchestrator
 
     def art_json(a: Artifact) -> dict:
-        return {"ref": a.ref, "kind": a.kind, "mime": a.mime, "title": a.title, "env": a.env_id,
+        return {"ref": a.ref, "kind": a.kind, "mime": a.mime, "title": a.title, "filename": a.filename, "env": a.env_id,
                 "created_at": a.created_at, "sources": a.sources, "parent": a.parent_id,
                 "generation": a.generation, "url": f"/files/{a.ref}"}
 
@@ -607,6 +607,17 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         try:
             a = service.library.get(ref)
             return FileResponse(service.library.path(a), media_type=a.mime)
+        except (KeyError, ValueError) as e:
+            raise HTTPException(404, str(e)) from e
+
+    @app.get("/api/preview/{ref}", dependencies=[Depends(auth)])
+    def preview(ref: str):
+        """Word・Excel・PowerPoint・PDF の中身を文字で返す（画面での確認用）。"""
+        try:
+            a = service.library.get(ref)
+            return {"text": extract_text(service.library.path(a))[:200_000]}
+        except DocumentError as e:
+            raise HTTPException(400, str(e)) from e
         except (KeyError, ValueError) as e:
             raise HTTPException(404, str(e)) from e
 

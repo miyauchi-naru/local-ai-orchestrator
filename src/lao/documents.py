@@ -78,6 +78,8 @@ def _office_text(path: Path, suffix: str) -> str:
         for shape in slide.shapes:
             if shape.has_text_frame and shape.text_frame.text.strip():
                 out.append(shape.text_frame.text)
+            elif getattr(shape, "has_table", False) and shape.has_table:
+                out += [" | ".join(c.text.strip() for c in row.cells) for row in shape.table.rows]
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip():
             out.append("（ノート）" + slide.notes_slide.notes_text_frame.text)
     return "\n".join(out)

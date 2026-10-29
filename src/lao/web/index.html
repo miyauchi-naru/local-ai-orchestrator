@@ -477,7 +477,9 @@ function thumb(a) {
   if (a.kind === "image") return `<div class="thumb"><img src="${fileUrl(a.ref)}" alt="" loading="lazy"></div>`;
   if (a.kind === "video") return `<div class="thumb"><video src="${fileUrl(a.ref)}#t=0.1" muted preload="metadata"></video></div>`;
   if (a.kind === "audio") return `<div class="thumb">♪ 音声</div>`;
-  return `<div class="thumb">📄 ${esc((a.mime || "").split("/").pop())}</div>`;
+  const ext = (a.filename || "").split(".").pop().toLowerCase();
+  const label = { docx: "Word", xlsx: "Excel", pptx: "PowerPoint", pdf: "PDF" }[ext];
+  return `<div class="thumb">📄 ${esc(label || (a.mime || "").split("/").pop())}</div>`;
 }
 async function cardHTML(ref) {
   const a = await art(ref).catch(() => null);
@@ -557,6 +559,15 @@ async function openArtifact(ref) {
   if (a.kind === "image") preview = `<img src="${fileUrl(a.ref)}" alt="">`;
   else if (a.kind === "video") preview = `<video src="${fileUrl(a.ref)}" controls></video>`;
   else if (a.kind === "audio") preview = `<audio src="${fileUrl(a.ref)}" controls></audio>`;
+  else if (/\.pdf$/i.test(a.filename)) {
+    const r = await getJSON(`/api/preview/${a.ref}`).catch(() => null);
+    preview = `<iframe src="${fileUrl(a.ref)}" title="PDF"></iframe>${r ? `<details><summary class="muted">文字で見る</summary><pre>${esc(r.text)}</pre></details>` : ""}`;
+  }
+  else if (/\.(docx|xlsx|pptx)$/i.test(a.filename)) {
+    const r = await getJSON(`/api/preview/${a.ref}`).catch(() => null);
+    preview = r ? `<p class="muted">中身の文字だけを表示しています。見た目は「保存」して Office で開いて確かめてください。</p><pre>${esc(r.text)}</pre>`
+      : `<p class="muted">中身を読めませんでした。</p>`;
+  }
   else preview = `<p class="muted">この形式（${esc(a.mime)}）は画面に表示できません。会話に添付すると AI が中身を読みます。</p>`;
   const g = a.generation || {};
   const rows = [["種類", KIND[a.kind]], ["環境", a.env.toUpperCase()], ["ID", a.ref], ["作成", new Date(a.created_at * 1000).toLocaleString("ja-JP")],
