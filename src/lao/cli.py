@@ -1,4 +1,4 @@
-"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose"""
+"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | sandbox-check"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 import secrets
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -118,6 +119,8 @@ def cmd_serve(args) -> int:
         catalog_dir = make_demo_catalog(catalog_dir, root / "catalog")
         # ダミーでは実機の空きメモリを見ない（128GB 機のふりをする）
         service = Service(machine, catalog_dir, fake_engine_factory(0.3), memory_probe=lambda: (128.0, 120.0))
+        if shutil.which("bwrap"):  # Linux で試すときはコード実行も動かす
+            service.sandbox.conf.enabled = True
         print("ダミーエンジンで起動します（本物のモデルは使いません）")
     else:
         machine = load_machine(config)
@@ -156,6 +159,24 @@ def cmd_p0(args) -> int:
     return 0
 
 
+def cmd_sandbox_check(args) -> int:
+    from .config import load_machine
+    from .sandbox import SandboxConfig, check
+
+    config, _ = _paths(args)
+    machine = load_machine(config)
+    conf = SandboxConfig.from_machine(machine.raw, Path(machine.raw["paths"]["root"]) / "sandbox")
+    print(f"コード実行の箱を確かめます（mode = {conf.mode}、作業フォルダ {conf.work_host}）")
+    rows = asyncio.run(check(conf))
+    for name, ok, detail in rows:
+        print(f"[{'OK' if ok else 'NG'}] {name}" + (f"：{detail}" if detail else ""))
+    if all(ok for _, ok, _ in rows):
+        print("\nすべて合格です。machine.toml の [sandbox] で enabled = true にするとコード実行が使えます")
+        return 0
+    print("\n不合格があります。コード実行は有効にしないでください")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lao", description="RTX Spark 向けローカルAI環境ツール")
     p.add_argument("--config", help="machine.toml のパス")
@@ -179,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--gpu-python", help="PyTorch(CUDA) が入った Python。GPU の確保上限を測る")
     sp.add_argument("--envs", help="測る環境（例：e1,e2）")
     sp.add_argument("--skip-models", action="store_true")
+    sub.add_parser("sandbox-check", help="コード実行の箱が通信できず、PC のファイルも見えないことを確かめる")
     args = p.parse_args(argv)
     if args.cmd == "doctor":
         return cmd_doctor(args)
@@ -188,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_plan(args, execute=args.execute)
     if args.cmd == "serve":
         return cmd_serve(args)
+    if args.cmd == "sandbox-check":
+        return cmd_sandbox_check(args)
     return cmd_p0(args)
 
 

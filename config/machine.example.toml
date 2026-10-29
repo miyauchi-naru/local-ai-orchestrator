@@ -72,3 +72,15 @@ watchdog_seconds = 900
 # 実機で測った値。lao p0 propose が書き込む。カタログの見積もりより優先される
 [measured]
 # 例： "e1.reasoner" = { peak_gb = 68.2, load_seconds = 41.0, tokens_per_second = 44.1 }
+
+[sandbox]
+# コード実行（分析ツール）。ネットにつながらない箱（bubblewrap）の中で Python を動かす。
+# 実機で lao sandbox-check がすべて合格してから true にする  # P0
+enabled = false
+# bwrap：サーバーが WSL2 の中で動くとき。wsl：サーバーが Windows で動き、箱専用の WSL（scripts/install-sandbox.ps1）を使うとき
+mode = "wsl"
+distro = "lao-sandbox"
+user = "sandbox"
+timeout_seconds = 60
+max_timeout_seconds = 600
+memory_mb = 4096

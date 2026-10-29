@@ -111,6 +111,7 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; heigh
 .artline .ico { width: 36px; height: 36px; border-radius: 8px; background: var(--hover); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--muted); flex: none; }
 .artline b { display: block; font-size: 14px; }
 .steps { font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding: 2px 0 2px 12px; margin: 0 0 10px; }
+.steps > div { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
 .steps summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
 .steps summary::-webkit-details-marker { display: none; }
 .thinking { white-space: pre-wrap; font-size: 13px; color: var(--muted); max-height: 260px; overflow: auto; margin-top: 4px; }
@@ -771,7 +772,7 @@ function assistantTools(t) {
 function assistantHTML(t, live) {
   const think = t.thinking ? `<details class="steps"${live && !t.content ? " open" : ""}><summary>${live && !t.content ? '<span class="spin"></span>' : "▸"} 思考の過程</summary><div class="thinking">${esc(t.thinking)}</div></details>` : "";
   const steps = t.progress && t.progress.length
-    ? `<details class="steps" ${live ? "open" : ""}><summary>${live ? '<span class="spin"></span>' : "▸"} ${esc(live ? t.progress[t.progress.length - 1] : `作業の記録（${t.progress.length}）`)}</summary>${t.progress.map((p) => `<div>${esc(p)}</div>`).join("")}</details>`
+    ? `<details class="steps" ${live ? "open" : ""}><summary>${live ? '<span class="spin"></span>' : "▸"} ${esc(live ? t.progress[t.progress.length - 1].split("\n")[0] : `作業の記録（${t.progress.length}）`)}</summary>${t.progress.map((p) => `<div>${esc(p)}</div>`).join("")}</details>`
     : live && !t.content && !t.thinking ? `<div class="steps"><span class="spin"></span> 考えています…</div>` : "";
   return `${think}${steps}<div class="cards"></div>${t.error ? `<div class="err">${esc(t.error)}</div>` : ""}<div class="body">${md(t.content, live)}</div>`;
 }
@@ -1066,9 +1067,11 @@ function itemEditor(kind, item) {
   dialog(`<h2>${titles[kind]}を${item ? "編集" : "作る"}</h2><div class="form">
     <label>名前${isSkill ? "（半角の小文字・数字・ハイフン）" : ""}<input type="text" id="ieName" value="${esc(item ? item.name : "")}"></label>
     <label>${isSkill ? "いつ使うか（説明・1行）" : "説明（1行）"}<input type="text" id="ieDesc" value="${esc(item ? item.description : "")}"></label>
-    <label>${isSkill ? "本文（手順）" : kind === "commands" ? "依頼文（$ARGUMENTS に続きの文字が入ります）" : "担当への指示"}<textarea class="field" id="ieBody" rows="12">${esc(item ? item.body : "")}</textarea></label></div>
+    <label>${isSkill ? "本文（手順）" : kind === "commands" ? "依頼文（$ARGUMENTS に続きの文字が入ります）" : "担当への指示"}<textarea class="field" id="ieBody" rows="12">${esc(item ? item.body : "")}</textarea></label>
+    ${isSkill && item && !item.plugin ? '<div id="ieFiles" class="muted">付けたファイルを読み込み中…</div>' : ""}</div>
     <div class="actions"><button class="btn" id="ieNo">やめる</button><button class="btn primary" id="ieOk">保存</button></div>`, (d) => {
     d.querySelector("#ieNo").onclick = closeDialog;
+    if (d.querySelector("#ieFiles")) skillFiles(item.name);
     d.querySelector("#ieOk").onclick = async () => {
       const name = d.querySelector("#ieName").value.trim();
       const j = { name, description: d.querySelector("#ieDesc").value.trim(), body: d.querySelector("#ieBody").value, enabled: item ? item.enabled !== false : true };
@@ -1076,6 +1079,24 @@ function itemEditor(kind, item) {
       catch (e) { toast(e.message); }
     };
   });
+}
+async function skillFiles(name) {
+  const box = $("ieFiles"); if (!box) return;
+  const base = `/api/skills/${encodeURIComponent(name)}/files`;
+  const r = await getJSON(base).catch(() => null); if (!r) { box.textContent = ""; return; }
+  box.innerHTML = `<b>付けたファイル</b>（.py・.csv・.json・.txt・.md、1MB まで）<br>
+    ${r.sandbox ? "AI がコード実行の箱の /work/skill/ で使えます。" : "コード実行が有効になると AI が使えます（いまは無効）。"}
+    <div class="list">${r.items.map((f) => `<div class="item"><div class="main"><b>${esc(f.name)}</b><span class="d">${f.size.toLocaleString()} バイト</span></div>
+      <button class="btn danger" data-fdel="${esc(f.name)}">外す</button></div>`).join("")}</div>
+    <input type="file" id="ieFile" hidden multiple><button class="btn" id="ieFileAdd">ファイルを付ける</button>`;
+  box.querySelectorAll("[data-fdel]").forEach((b) => b.onclick = async () => { await api(`${base}/${encodeURIComponent(b.dataset.fdel)}`, { method: "DELETE" }); skillFiles(name); });
+  $("ieFileAdd").onclick = () => $("ieFile").click();
+  $("ieFile").onchange = async (e) => {
+    for (const f of e.target.files) {
+      try { await api(`${base}/${encodeURIComponent(f.name)}`, { method: "PUT", body: f }); } catch (err) { toast(err.message); }
+    }
+    skillFiles(name);
+  };
 }
 async function saveSkillFromText(text) {
   const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
