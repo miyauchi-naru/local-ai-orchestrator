@@ -22,14 +22,15 @@ chat = [
   "e2.e2-standard.chat",       # Gemma 4 26B-A4B
   "e1.e1-omni.omni",           # Qwen3-Omni-30B-A3B
   "e1.e1-lfm3-omni.omni",      # LFM3-Omni
-  # "e4.e4-ltx.chat",          # Gemma 4 E4B（小さい。判定役と同じモデルなので、比べるときは判定役を変える）
+  "e4.e4-ltx.chat",            # Gemma 4 E4B（小さい。メモリの比較用）
   "e1.e1-standard.reasoner",   # gpt-oss-120b（画像を見られないので「見て直す」は 0 になる）
 ]
 image = ["e2.e2-standard.imagegen"]
 # 動画の課題に使う生成モデル。空にすると動画の課題は飛ばす（組み合わせが video の数だけ増える）
 video = ["e4.e4-ltx.videogen"]
-# 判定役（画像を見られる理解モデル）。候補の会話モデルと同じだと甘くなる恐れがあるので、結果に注意が出る
-judge = "e1.e1-standard.perceiver"
+# 判定役。all ならカタログで画像を見られるモデル全部が一つずつ判定し、判定役ごとの品質の中央値で順位を付ける
+# （組み合わせ自身の会話モデルは、その組み合わせの判定から外す）。絞るなら "e1.e1-standard.perceiver,e1.e1-omni.omni" のように書く
+judge = "all"
 
 # ---------------------------------------------------------------- 初回の再現度＋見て直す力
 [[tasks]]

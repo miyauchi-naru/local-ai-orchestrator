@@ -221,17 +221,17 @@ def cmd_p0(args) -> int:
 
 
 def cmd_pairs(args, machine, catalog_dir: Path, results: Path) -> int:
-    from .p0.pairs import PairsError, finish, run
+    from .p0.pairs import PairsError, finish, normalize_answers, run
 
     try:
         if args.score:
             out = Path(args.score)
             answers = json.loads((out / "answers.json").read_text(encoding="utf-8"))
-            finish(out, answers, args.judge or "")
+            finish(out, normalize_answers(answers, args.judge or ""))
             print(f"採点しました：{out / 'report.md'}")
             return 0
         suite = Path(args.suite or catalog_dir / "shared" / "pairs.toml")
-        run(machine, catalog_dir, suite, results, only=args.only or "", judge_ref=args.judge, no_judge=args.no_judge)
+        run(machine, catalog_dir, suite, results, only=args.only or "", judge=args.judge, no_judge=args.no_judge)
     except (PairsError, FileNotFoundError) as e:
         print(e)
         return 1
@@ -348,7 +348,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--skip-models", action="store_true")
     sp.add_argument("--suite", help="pairs：課題と候補のファイル（既定 catalog/shared/pairs.toml）")
     sp.add_argument("--only", help="pairs：名前にこの文字を含む組み合わせだけ測る")
-    sp.add_argument("--judge", help="pairs：判定役（環境.構成.部品）。課題ファイルの judge より優先")
+    sp.add_argument("--judge", help="pairs：判定役（all＝画像を見られる全モデル、または 環境.構成.部品 をカンマ区切り）。"
+                    "--score では answers.json の判定役の名前")
     sp.add_argument("--no-judge", action="store_true", help="pairs：生成だけ行い、判定は後で（answers.json）")
     sp.add_argument("--score", metavar="DIR", help="pairs：DIR の answers.json で採点し直す")
     sp = sub.add_parser("configure", help="machine.toml をコメントを残したまま書き換える")
