@@ -11,7 +11,11 @@
   - ファイアウォールは「プライベート」ネットワークの同じ LAN（LocalSubnet）からだけ 22 番を許す
   - メイン PC の公開鍵を登録する
   - 受け取り箱（$DataRoot\inbox）を作る（メイン PC から scp で送ったファイルを import_file で取り込む）
-  - -AutostartServe を付けると、ログオン時に lao serve を起動するタスクを登録する
+  - -AutostartServe を付けると、lao serve を起動するタスク（lao-serve）を登録する。
+    既定は PC の起動時（サインインしなくてよい。Windows Update の再起動の後も戻る）とログオン時の両方で、
+    落ちたら 1 分おきに 3 回まで起動し直す。-ServeAtLogonOnly でログオン時だけにする
+    （起動時の形で GPU が使えなかったとき。docs/arrival.md 3 章で確かめる）
+  - lao の画面を開くショートカット「lao」をデスクトップとスタートメニューに置く
 
   lao serve と ComfyUI は今まで通り 127.0.0.1 でだけ待ち受ける。LAN に開くのは SSH だけ。
   終わったらメイン PC から `ssh spark C:/lao/venv/Scripts/lao.exe mcp --check` で確かめる（docs/remote.md）。
@@ -26,7 +30,8 @@ param(
   [string]$PublicKey = "",        # 公開鍵の 1 行をそのまま渡すとき（-PublicKeyFile の代わり）
   [string]$Root = "C:\lao",       # lao の Python 環境がある場所
   [string]$DataRoot = "D:\lao",   # machine.toml の paths.root（受け取り箱を置く）
-  [switch]$AutostartServe
+  [switch]$AutostartServe,
+  [switch]$ServeAtLogonOnly
 )
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -117,11 +122,33 @@ Step "受け取り箱を作る（$DataRoot\inbox）" {
   New-Item -ItemType Directory -Force -Path "$DataRoot\inbox" | Out-Null
 }
 if ($AutostartServe) {
-  Step "ログオン時に lao serve を起動するタスク（lao-serve）を登録する" {
+  $when = if ($ServeAtLogonOnly) { "ログオン時" } else { "PC の起動時（サインイン不要）とログオン時" }
+  Step "$when に lao serve を起動するタスク（lao-serve）を登録する。落ちたら起動し直す" {
     $action = New-ScheduledTaskAction -Execute $Lao -Argument "serve" -WorkingDirectory $Repo
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
-    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries
-    Register-ScheduledTask -TaskName "lao-serve" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+    $triggers = @(New-ScheduledTaskTrigger -AtLogOn -User $User)
+    if (-not $ServeAtLogonOnly) { $triggers += New-ScheduledTaskTrigger -AtStartup }
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    # S4U：パスワードを預けずに、サインインしていなくてもこの利用者として動かす（ネットワークの共有フォルダは使えない）
+    $logon = if ($ServeAtLogonOnly) { "Interactive" } else { "S4U" }
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$User" -LogonType $logon -RunLevel Limited
+    Register-ScheduledTask -TaskName "lao-serve" -Action $action -Trigger $triggers -Settings $settings `
+      -Principal $principal -Force | Out-Null
+  }
+}
+Step "lao の画面を開くショートカット「lao」をデスクトップとスタートメニューに置く" {
+  $shell = New-Object -ComObject WScript.Shell
+  $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+  if (-not (Test-Path $edge)) { $edge = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe" }
+  # API キーはショートカットに書かず、開くたびに lao key で受け取る
+  $open = "`$k = & '$Lao' key; Start-Process '$edge' ('--app=http://127.0.0.1:8710/?key=' + `$k)"
+  foreach ($dir in [Environment]::GetFolderPath("Desktop"), (Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs")) {
+    $lnk = $shell.CreateShortcut((Join-Path $dir "lao.lnk"))
+    $lnk.TargetPath = "powershell.exe"
+    $lnk.Arguments = "-NoProfile -WindowStyle Hidden -Command `"$open`""
+    $lnk.WindowStyle = 7
+    if (Test-Path $edge) { $lnk.IconLocation = "$edge,0" }
+    $lnk.Save()
   }
 }
 

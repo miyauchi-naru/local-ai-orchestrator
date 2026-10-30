@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .config import Component, Configuration, Environment, MachineConfig, check_policy, missing_capabilities
-from .lock import InferenceLock
+from .lock import GENERATE, InferenceLock, priority_of
 from .memory import Decision, MemoryGovernor
 
 
@@ -61,6 +61,13 @@ class Runtime:
         self._engines: dict[str, Engine] = {}
         self._loading = asyncio.Lock()
         self.last_used = time.monotonic()
+        h = machine.raw.get("health", {})
+        # 熱いときの小休止：生成の区切りの前に GPU の温度を見て、高ければ下がるまで待つ（ノート PC で蓋を閉じて使うため）
+        self.cool_above = float(h.get("cooldown_above_c", 85))
+        self.cool_to = float(h.get("cooldown_to_c", 75))
+        self.cool_max_seconds = float(h.get("cooldown_max_seconds", 600))
+        self.temp_probe = None  # () -> 温度（℃）か None。Service が渡す
+        self.cooling: float | None = None  # 冷ましている間は温度
 
     def resident_estimate(self, c: Component) -> float:
         m = self.machine.measured(self.env.id, c.key)
@@ -96,6 +103,8 @@ class Runtime:
         ロード確認と実行を同じロックの中で行う。
         """
         async with self.lock.hold(holder):
+            if priority_of(holder) == GENERATE:
+                await self.cool_down()
             self.last_used = time.monotonic()
             await self.ensure(keys, work_gb)
             if job_id and work_gb:
@@ -106,6 +115,23 @@ class Runtime:
                 self.last_used = time.monotonic()
                 if job_id and work_gb:
                     self.governor.release(job_id)
+
+    async def cool_down(self, interval: float = 15.0) -> float:
+        """GPU が cool_above を超えていたら、cool_to まで下がるか cool_max_seconds たつまで待つ。待った秒数を返す。"""
+        if not self.temp_probe or self.cool_above <= 0:
+            return 0.0
+        t = await asyncio.to_thread(self.temp_probe)
+        if t is None or t < self.cool_above:
+            return 0.0
+        start = time.monotonic()
+        try:
+            while t is not None and t > self.cool_to and time.monotonic() - start < self.cool_max_seconds:
+                self.cooling = t
+                await asyncio.sleep(interval)
+                t = await asyncio.to_thread(self.temp_probe)
+        finally:
+            self.cooling = None
+        return time.monotonic() - start
 
     async def unload(self, key: str) -> None:
         eng = self._engines.get(key)
@@ -158,6 +184,7 @@ class Runtime:
             "loaded": self.loaded(),
             "memory": self.governor.snapshot(),
             "lock": self.lock.status(),
+            "cooling": self.cooling,
         }
 
 

@@ -1495,6 +1495,7 @@ async function renderSettings() {
   showView("settings");
   await loadSettings();
   const s = state.settings; const mem = await getJSON("/api/memory");
+  const [ist, hl] = await Promise.all([getJSON("/api/image-styles").catch(() => ({ styles: [], aspects: [] })), getJSON("/api/health").catch(() => null)]);
   const theme = store("lao-theme") || "system", fs = store("lao-fs") || "15";
   $("page").innerHTML = `<h1>設定</h1>
     <h2>あなたについて</h2><p class="small muted">すべての会話に効きます（仕事、呼び方、答え方の好みなど）。</p>
@@ -1517,6 +1518,13 @@ async function renderSettings() {
     <div class="actions" style="margin-top:8px"><button class="btn" id="stAddFolder">フォルダを許可（パスを入力）</button></div>
     <h2>休憩の声かけ</h2><p class="small muted">続けて使っているとき、区切りのよいところで休憩をすすめます（15 分あくと、続けての使用は数え直します）。</p>
     <select class="field" id="stBreak" style="max-width:200px">${[[0, "しない"], [45, "45 分ごと"], [60, "60 分ごと"], [90, "90 分ごと"], [120, "120 分ごと"]].map(([k, l]) => `<option value="${k}" ${+s.break_minutes === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <h2>画像のスタイル</h2><p class="small muted">絵柄の前置き・避けたい内容・縦横比を名前で保存し、「スタイル○○で」と頼むと使います（メイン PC の Claude Code からも同じものを使えます）。</p>
+    <div class="list">${ist.styles.map((x) => `<div class="item"><div class="main"><b>${esc(x.name)}</b><span class="d">${esc(x.prompt.slice(0, 120))}${x.aspect ? "・" + esc(x.aspect) : ""}${x.note ? "・" + esc(x.note) : ""}</span></div><button class="btn danger" data-imgstyle="${esc(x.name)}">削除</button></div>`).join("") || '<p class="muted">まだありません</p>'}</div>
+    <div class="actions" style="margin-top:8px"><button class="btn" id="stAddImgStyle">スタイルを追加</button></div>
+    <h2>この PC の状態</h2>
+    <p class="small" id="stHealth" style="white-space:pre-wrap">${hl ? esc(hl.summary) : "読めませんでした"}</p>
+    <p class="small muted">使わないモデルは ${hl && hl.idle_unload_minutes ? Math.round(hl.idle_unload_minutes) + " 分で" : "（自動では）"}下ろします。会話・記憶・設定は毎日バックアップします。片づけは作業の残りと古い記録だけで、成果物は消しません。</p>
+    <div class="actions"><button class="btn" id="stUnload">今すぐモデルを下ろす</button><button class="btn" id="stCleanup">片づける…</button><button class="btn" id="stBackup">今バックアップする</button></div>
     <h2>外観</h2>
     <div class="row2"><span class="seg" id="stTheme">${[["system", "システム"], ["light", "ライト"], ["dark", "ダーク"]].map(([k, l]) => `<button data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</span>
     <span class="seg" id="stFs">${[["14", "小"], ["15", "中"], ["17", "大"]].map(([k, l]) => `<button data-fs="${k}" class="${fs === k ? "on" : ""}">${l}</button>`).join("")}</span></div>
@@ -1540,6 +1548,28 @@ async function renderSettings() {
     const isSample = text.length > 200;
     const t = isSample ? `次の文例と同じ文体・語彙・文の長さで答えてください。\n文例：\n${text.slice(0, 3000)}` : text;
     if (await saveSettings({ custom_styles: [...s.custom_styles, { name: name.trim(), text: t }] })) renderSettings();
+  };
+  $("stAddImgStyle").onclick = async () => {
+    const name = await promptBox("スタイルの名前（例：ドット絵）", ""); if (!name) return;
+    const prompt = await promptBox("前置き（英語がおすすめ。{prompt} と書くとそこに頼んだ内容が入ります）", "", "次へ", true); if (prompt === null) return;
+    const negative = await promptBox("避けたい内容（なければ空のまま）", "", "次へ"); if (negative === null) return;
+    const aspect = await promptBox(`縦横比（${ist.aspects.join("・")}、なければ空のまま）`, "", "保存");
+    try { await api("/api/image-styles", { method: "POST", json: { name, prompt, negative: negative || "", aspect: (aspect || "").trim() } }); toast("保存しました"); renderSettings(); }
+    catch (err) { toast(err.message || "保存できませんでした"); }
+  };
+  document.querySelectorAll("[data-imgstyle]").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation(); await api(`/api/image-styles/${encodeURIComponent(b.dataset.imgstyle)}`, { method: "DELETE" }); renderSettings();
+  });
+  $("stUnload").onclick = async () => { try { await api("/api/unload", { method: "POST" }); toast("下ろしました"); } catch (err) { toast(err.message || "できませんでした"); } };
+  $("stBackup").onclick = async () => { const r = await getJSON("/api/backup", { method: "POST" }); toast("バックアップしました：" + r.path); };
+  $("stCleanup").onclick = async () => {
+    const r = await getJSON("/api/cleanup", { method: "POST", json: {} });
+    const kinds = Object.entries(r.by_kind); if (!kinds.length) { toast("片づけるものはありません"); return; }
+    const LABEL = { work: "作業の残り", comfyui: "画像・動画の出力の複製", trash: "ごみ箱（30 日より前）", jobs: "古いジョブの記録", logs: "古いログ", backups: "古いバックアップ" };
+    const list = kinds.map(([k, v]) => `${LABEL[k] || k}：${v.count} 個（${(v.bytes / 1048576).toFixed(0)}MB）`).join("\n");
+    if (!(await confirmBox("次のものを消しますか？", list + "\n\n成果物は消しません。", "消す"))) return;
+    const d = await getJSON("/api/cleanup", { method: "POST", json: { execute: true } });
+    toast(`${(d.removed_bytes / 1048576).toFixed(0)}MB 片づけました`); renderSettings();
   };
   $("stTheme").onclick = (e) => { const b = e.target.closest("[data-theme]"); if (!b) return; store("lao-theme", b.dataset.theme); applyLook(); renderSettings(); };
   $("stFs").onclick = (e) => { const b = e.target.closest("[data-fs]"); if (!b) return; store("lao-fs", b.dataset.fs); applyLook(); renderSettings(); };

@@ -94,6 +94,8 @@ def health(service, nvidia_smi: str = "nvidia-smi", now: float | None = None) ->
         h.warnings.append(f"GPU が {g['temp_c']:.0f}℃ です。長い生成の前に冷ますか、置き方を変えてください")
     if g and g.get("thermal_slowdown"):
         h.warnings.append("熱で速度を落としています（蓋を閉じているなら置き方を見直してください）")
+    if rt and rt.cooling is not None:
+        h.warnings.append(f"GPU が {rt.cooling:.0f}℃ なので、{rt.cool_to:.0f}℃ に下がるまで生成を小休止しています")
     if failed:
         h.warnings.append(f"直近 24 時間で {len(failed)} 件のジョブが失敗しています")
     return h

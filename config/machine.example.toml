@@ -45,6 +45,11 @@ keep = 14
 # この値を超えたら status・health で知らせる
 disk_warn_pct = 90
 gpu_temp_warn_c = 85
+# 熱いときの小休止：生成の区切りの前に GPU がこの温度を超えていたら、cooldown_to_c まで下がるのを待つ
+# （最長 cooldown_max_seconds 秒。生成の途中では止めない。0 で使わない）  # P0 で実測して調整
+cooldown_above_c = 85
+cooldown_to_c = 75
+cooldown_max_seconds = 600
 
 [server]
 host = "127.0.0.1"

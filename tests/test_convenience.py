@@ -291,3 +291,21 @@ async def test_lock_survives_cancelled_waiter():
         t.cancel()
     async with lock.hold("c"):
         assert lock.status()["holder"] == "c"
+
+
+async def test_generation_pauses_while_gpu_is_hot(svc):
+    temps = iter([90.0, 80.0, 74.0])
+    svc.temp_probe = lambda: next(temps, 70.0)
+    rt = await svc.select("e2")
+    waited = await rt.cool_down(interval=0)
+    assert waited >= 0 and next(temps, None) is None  # 74℃ まで見た
+    svc.temp_probe = lambda: 60.0
+    rt = await svc.select("e2")
+    assert await rt.cool_down(interval=0) == 0.0
+
+
+async def test_cooldown_gives_up_after_max(svc):
+    rt = await svc.select("e2")
+    rt.temp_probe, rt.cool_max_seconds = (lambda: 95.0), 0.05
+    await rt.cool_down(interval=0.01)
+    assert rt.cooling is None

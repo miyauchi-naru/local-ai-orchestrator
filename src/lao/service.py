@@ -26,6 +26,12 @@ from .image_styles import StyleStore
 from .runtime import Runtime, default_engine_factory
 
 
+def gpu_temperature() -> float | None:
+    from .maintenance import gpu
+    g = gpu()
+    return g.get("temp_c") if g else None
+
+
 STYLES = {
     "standard": "",
     "concise": "要点だけを短く答えてください。",
@@ -85,6 +91,7 @@ class Service:
         self._factory = engine_factory or default_engine_factory(machine, self.log_dir)
         self.memory_probe = memory_probe
         self.runtime: Runtime | None = None
+        self.temp_probe = gpu_temperature  # 試験では差し替える
         self.orchestrator: Orchestrator | None = None
 
     def environments(self) -> list[dict]:
@@ -404,6 +411,7 @@ class Service:
             await self.runtime.unload_all()
         self.runtime = Runtime(self.machine, env, env.configurations[conf_id], self._factory, lock=self.lock,
                                probe=self.memory_probe)
+        self.runtime.temp_probe = self.temp_probe
         self.orchestrator = Orchestrator(self.runtime, self.library, self.jobs, self.media,
                                          self.work_dir, self.catalog_dir, self.sandbox, self.index)
         self.orchestrator.styles = self.styles

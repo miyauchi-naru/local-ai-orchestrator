@@ -14,5 +14,16 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
       # bwrap が名前空間を作れるようにする（Ubuntu 24.04 は既定で制限している）。箱のテストを飛ばさずに動かすため
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # PowerShell のスクリプトは Windows でしか流せないので、ここでは書き方の誤りだけを確かめる
+      - name: PowerShell の構文
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem scripts -Recurse -Filter *.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors)
+            foreach ($e in $errors) { Write-Host "$($f.Name):$($e.Extent.StartLineNumber) $($e.Message)"; $bad++ }
+          }
+          if ($bad) { exit 1 }
       - run: pip install -e ".[dev]"
       - run: pytest -q -rs

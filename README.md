@@ -92,7 +92,13 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 ## 別の PC の Claude Code から使う
 
-メイン PC の Claude Code から、SSH 越しに `lao mcp` を道具として使えます。画像・動画・読み上げ音声の生成と、要約・翻訳・仕上がりの確認などの下請けをこの PC に任せ、Claude のトークンを節約します。LAN に開くのは SSH だけで、lao と ComfyUI は 127.0.0.1 のままです。同じ SSH のトンネルで、この画面そのものをメイン PC のブラウザから使うこともできます。準備（`scripts\enable-remote.ps1`）と使い方は [docs/remote.md](docs/remote.md) にあります。
+メイン PC の Claude Code から、SSH 越しに `lao mcp` を道具として使えます。画像・動画・読み上げ音声の生成と、要約・翻訳・仕上がりの確認などの下請けをこの PC に任せ、Claude のトークンを節約します。LAN に開くのは SSH だけで、lao と ComfyUI は 127.0.0.1 のままです。同じ SSH のトンネルで、この画面そのものをメイン PC から使うこともできます。準備（`scripts\enable-remote.ps1`、`scripts\prepare-main-pc.ps1`）と使い方は [docs/remote.md](docs/remote.md) にあります。
+
+利用者が使うのは、Spark では lao の画面だけ、メイン PC では Claude Code と lao の画面だけです。ファイルの受け渡し（`spark.ps1 put`・`get`）、つながらないときの点検と Wake-on-LAN、更新（`update`）、片づけ（`cleanup`）、毎日のバックアップは Claude かタスクが行います。
+
+- 重なったときの順番：Claude にできないこと（生成・理解）→ Claude のトークンを多く使う下請け（ask_local）→ それ以外
+- 熱・電気：使わないモデルは 30 分で下ろし、GPU が熱いときは生成の区切りで小休止します
+- 画像：`count` でまとめて作って並べて比べ、絵柄は名前つきのスタイルで呼べます。動画には `make_clip` で読み上げを重ねられます
 
 ## Open WebUI などから使う
 
@@ -103,11 +109,14 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 catalog/        構成カタログ（E1〜E4。モデル・配布元・ライセンス・メモリ見積もり）
 config/         実機の設定（machine.example.toml をコピーして使う）
-scripts/        導入スクリプト（既定は確認のみ）
+scripts/        導入スクリプト（既定は確認のみ）。spark.ps1 と main-pc/ はメイン PC に置くもの
 src/lao/
   config.py       設定とカタログの読み込み、必須能力・量子化ルールの検査
   memory.py       統合メモリの予算と受付判定
-  lock.py         共通の推論ロック
+  lock.py         共通の推論ロック（優先度つき）
+  maintenance.py  健康状態、片づけ、バックアップ
+  updater.py      lao update（git pull、再起動、失敗したら元に戻す）
+  image_styles.py 画像のスタイル
   runtime.py      部品のロード・アンロード（予算内で、構成の中だけ）
   orchestrator.py 会話→ツール呼出し→ジョブ→説明の流れ
   tools.py        ツールの定義と引数検証
