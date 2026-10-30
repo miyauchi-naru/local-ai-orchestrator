@@ -27,6 +27,9 @@ safety_factor = 1.15
 min_free_system_gb = 8
 # この分数だけ使われなければ、読み込んだモデルを下ろす（次の依頼で読み直す）。0 なら下ろさない
 idle_unload_minutes = 30
+# 別の PC（lao mcp）から画像・動画・音声の生成を頼まれたら、生成の前に会話モデルなど他の部品を下ろす。
+# 画面での作業（音声会話の読み上げなど）では下ろさない
+free_chat_for_remote_generation = true
 
 [policy]
 # 配布元が公式に出している量子化形式（例：gpt-oss の MXFP4）は候補にしてよい
@@ -56,6 +59,9 @@ host = "127.0.0.1"
 port = 8710
 # Open WebUI などから接続するときの API キー（空なら起動時に生成して表示）
 api_key = ""
+# lao mcp の ask_local を、呼ぶ側が best を指定しないときも E1 の大きい推論モデルで答えさせるか
+# （false なら今の環境の AI が答える。生成の合間にモデルの入れ替えが起きないので速い）
+ask_local_best = false
 
 [engines.llama]
 # llama-server 実行ファイル  # P0

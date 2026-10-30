@@ -137,7 +137,8 @@ class Sandbox:
             proc.kill()
             await proc.wait()
             raise
-        timed_out = proc.returncode in (-9, 137)
+        # GNU の timeout -s KILL は 137、uutils 版（新しい Ubuntu の既定）は 124 を返す
+        timed_out = proc.returncode in (-9, 124, 137)
         outputs, total = [], 0
         for p in sorted((host / "out").rglob("*")):
             if p.is_file() and not p.is_symlink() and len(outputs) < MAX_OUTPUT_FILES:

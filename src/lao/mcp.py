@@ -38,6 +38,9 @@ INSTRUCTIONS = (
     "決まった絵柄は save_style で保存し、style で呼べます。\n"
     "- 環境（E1 推論、E2 画像、E3 音声、E4 動画）は、道具に合わせて自動で切り替わります。"
     "切り替えにはモデルの入れ替えで時間がかかり、その分も生成時間に含まれます。\n"
+    "- ask_local は今の環境の AI が答えます（答えたモデル名を末尾に付けます）。"
+    "大事な文章や難しい作業は best=true で E1 の大きいモデルに頼んでください。"
+    "生成の合間の短いプロンプト作りは best を付けないほうが、モデルの入れ替えが起きず速いです。\n"
     "- 時間がかかると job=… が返ります。job で待ってください（何度も短く問い合わせないでください）。"
 )
 
@@ -87,7 +90,10 @@ TOOL_DEFS = [
          "refs": {"type": "array", "items": {"type": "string"}, "description": "素材にする成果物（id@版、文書・テキスト）"},
          "inbox": {"type": "array", "items": {"type": "string"},
                    "description": "素材にする受け取り箱のファイル名・フォルダ名（取り込んでから読む。PDF・Word・Excel・PowerPoint も可）"},
-         "max_tokens": {"type": "integer", "minimum": 64, "maximum": 8192}},
+         "max_tokens": {"type": "integer", "minimum": 64, "maximum": 8192},
+         "best": {"type": "boolean",
+                  "description": "true なら E1 の大きい推論モデルで答える（切り替えでモデルを入れ替えるので遅い）。"
+                                 "false なら今の環境の AI で答える（生成の合間は小さいモデルのことがある）"}},
          "required": ["task"], "additionalProperties": False}},
     {"name": "import_file",
      "description": "受け取り箱（lao の root/inbox）に送ったファイルかフォルダを成果物に取り込み、ref を返す。",
@@ -279,7 +285,12 @@ class Bridge:
         st = self._req("GET", "/api/status").json()
         if st.get("environment") and (name is None or name in st.get("tools", [])):
             return ""
-        env = HOME_ENV.get(name or "", "e1")
+        return self._switch_to(HOME_ENV.get(name or "", "e1"))
+
+    def _switch_to(self, env: str) -> str:
+        """env へ切り替える（同じ環境なら何もしない）。実行中のジョブがあれば終わるのを待つ。切り替えた環境を返す。"""
+        if (self._req("GET", "/api/status").json().get("environment") or {}).get("id") == env:
+            return ""
         for j in self._req("GET", "/api/jobs").json()["jobs"]:
             if j["state"] not in TERMINAL_STATES:
                 self._job(j["id"], MAX_WAIT)
@@ -304,8 +315,16 @@ class Bridge:
             raise LaoError("ref か refs を指定してください")
         return [{"type": "image", "data": base64.b64encode(r.content).decode(), "mimeType": "image/jpeg"}]
 
+    def ask_local_best(self) -> bool:
+        return bool(self.machine and self.machine.raw.get("server", {}).get("ask_local_best", False))
+
     def t_ask_local(self, args: dict) -> str:
-        self._ensure_env(None)  # どの環境の AI でもよい。未選択のときだけ E1 を選ぶ
+        args = dict(args)
+        best = args.pop("best", None)
+        if best if best is not None else self.ask_local_best():
+            self._switch_to("e1")  # 大きい推論モデルで答える
+        else:
+            self._ensure_env(None)  # どの環境の AI でもよい。未選択のときだけ E1 を選ぶ
         r = self._req("POST", "/api/delegate", json=args, timeout=3600).json()
         # 下請けの素材のうち、頼む側が書いて送った text は Claude がもう読んでいるので、節約には数えない
         self._offloaded = max(0, int(r.get("material_tokens", 0)) - est_tokens(args.get("text", "")))
@@ -314,6 +333,8 @@ class Bridge:
             notes.append("取り込んだ資料：" + " ".join(r["refs"]))
         if r.get("pieces", 1) > 1:
             notes.append(f"（長いので {r['pieces']} 区切りに分けて読みました）")
+        if r.get("model"):
+            notes.append(f"（答えた AI：{r['model']}、{r.get('environment', '')}）")
         return r["text"] + ("\n\n" + "\n".join(notes) if notes else "")
 
     def t_import_file(self, args: dict) -> str:

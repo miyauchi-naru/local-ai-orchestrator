@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -23,6 +24,10 @@ class Engine(Protocol):
     def running(self) -> bool: ...
     async def load(self) -> None: ...
     async def unload(self) -> None: ...
+
+
+# 別の PC からの生成の依頼で true にする：ロックを取ったら、使う部品以外（会話モデルなど）を先に下ろす
+FREE_OTHERS: contextvars.ContextVar[bool] = contextvars.ContextVar("lao_free_others", default=False)
 
 
 class NotAdmitted(RuntimeError):
@@ -106,6 +111,8 @@ class Runtime:
             if priority_of(holder) == GENERATE:
                 await self.cool_down()
             self.last_used = time.monotonic()
+            if FREE_OTHERS.get():
+                await self.free_others(keys)
             await self.ensure(keys, work_gb)
             if job_id and work_gb:
                 self.governor.reserve(job_id, work_gb)
@@ -138,6 +145,14 @@ class Runtime:
         if eng and eng.running:
             await eng.unload()
         self.governor.mark_unloaded(key)
+
+    async def free_others(self, keys: list[str]) -> list[str]:
+        """keys 以外の読み込み済みの部品を下ろす。下ろした部品を返す。"""
+        others = [k for k in self.loaded() if k not in keys]
+        async with self._loading:
+            for k in others:
+                await self.unload(k)
+        return others
 
     async def unload_all(self) -> None:
         for k in list(self._engines):

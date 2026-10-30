@@ -185,3 +185,26 @@ def test_server_key_from_file(machine):
     root.mkdir(parents=True, exist_ok=True)
     (root / "server.key").write_text("secret\n", encoding="utf-8")
     assert server_key(machine) == "secret"
+
+
+def test_remote_generation_frees_the_chat_model(bridge, svc):
+    call(bridge, "switch_environment", env="e3", preload=True)  # 会話モデルと TTS が両方入る環境
+    assert "chat" in svc.runtime.loaded()
+    r = call(bridge, "generate_speech", text="こんにちは")
+    assert not r["isError"]
+    assert svc.runtime.loaded() == ["tts"]  # 生成だけなら会話モデルは下ろす
+
+
+def test_remote_generation_keeps_chat_when_disabled(bridge, svc):
+    svc.machine.raw.setdefault("memory", {})["free_chat_for_remote_generation"] = False
+    call(bridge, "switch_environment", env="e3", preload=True)
+    call(bridge, "generate_speech", text="こんにちは")
+    assert "chat" in svc.runtime.loaded()
+
+
+def test_ask_local_best_uses_e1_and_names_the_model(bridge, svc):
+    call(bridge, "switch_environment", env="e4")
+    r = call(bridge, "ask_local", task="要約", text="素材")
+    assert not r["isError"] and "e4" in text(r) and svc.runtime.env.id == "e4"  # 既定は今の環境の AI
+    r = call(bridge, "ask_local", task="要約", text="素材", best=True)
+    assert not r["isError"] and svc.runtime.env.id == "e1" and "gpt-oss-120b" in text(r)
