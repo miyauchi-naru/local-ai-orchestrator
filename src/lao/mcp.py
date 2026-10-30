@@ -21,6 +21,7 @@ from typing import Any, Callable, TextIO
 import httpx
 
 from .tools import TOOLS
+from .usage import IMAGE_TOKENS, VIDEO_FRAMES, category, est_tokens, thumb_tokens
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_WAIT = 240  # 生成ツールで結果を待つ既定の秒数。超えたらジョブ番号を返す
@@ -138,6 +139,10 @@ TOOL_DEFS = [
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "unload", "description": "読み込んだモデルを今すぐ下ろす（熱と電気を抑える。次の依頼で読み直す）。",
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"name": "usage",
+     "description": "Claude のトークンの記録：lao に任せた回数と節約の見積もり、メイン PC の Claude Code が実際に使った量（月ごと）。",
+     "inputSchema": {"type": "object", "properties": {
+         "month": {"type": "string", "description": "YYYY-MM（省略すると今月）"}}, "additionalProperties": False}},
     {"name": "update",
      "description": "Spark の lao を最新にする（git pull → 必要なら依存を入れる → lao serve を再起動 → 動かなければ元の版に戻す）。"
                     "既定は確認だけ。execute で行う。",
@@ -162,6 +167,8 @@ class LaoError(Exception):
 class Bridge:
     """MCP の道具呼び出しを lao serve の API に置き換える。"""
 
+    _offloaded = 0  # 今の呼び出しで Spark が代わりに読んだトークン（見積もり）
+
     def __init__(self, client: httpx.Client, machine=None):
         self.http = client
         self.machine = machine
@@ -180,13 +187,46 @@ class Bridge:
         return r
 
     def call(self, name: str, args: dict) -> list[dict]:
-        fn: Callable[[dict], Any] | None = getattr(self, f"t_{name}", None)
-        if name in GENERATORS:
-            return _text(self.run(name, args))
-        if fn is None:
-            raise LaoError(f"道具 {name} はありません")
-        out = fn(args)
-        return out if isinstance(out, list) else _text(out)
+        t0 = time.monotonic()
+        self._offloaded = 0
+        ok, out = False, []
+        try:
+            fn: Callable[[dict], Any] | None = getattr(self, f"t_{name}", None)
+            if name in GENERATORS:
+                out = _text(self.run(name, args))
+            elif fn is None:
+                raise LaoError(f"道具 {name} はありません")
+            else:
+                res = fn(args)
+                out = res if isinstance(res, list) else _text(res)
+            ok = True
+            return out
+        finally:
+            self._record(name, args, out, ok, time.monotonic() - t0)
+
+    def _record(self, name: str, args: dict, out: list[dict], ok: bool, seconds: float) -> None:
+        """呼び出しごとに、Claude に返した量と、Spark が代わりに読んだ量の見積もりを残す（失敗しても道具は止めない）。"""
+        if name == "usage":
+            return
+        returned = sum(est_tokens(c.get("text", "")) for c in out if c.get("type") == "text")
+        returned += sum(_image_tokens(c) for c in out if c.get("type") == "image")
+        kind = ""
+        offloaded = self._offloaded
+        if name == "describe_media" and args.get("ref"):
+            try:
+                kind = self._req("GET", f"/api/artifact/{args['ref']}").json()["kind"]
+            except LaoError:
+                kind = ""
+            offloaded = {"image": IMAGE_TOKENS, "video": IMAGE_TOKENS * VIDEO_FRAMES}.get(kind, 0)
+        cat = category(name, kind)
+        rec = {"tool": name, "category": cat, "ok": ok, "seconds": seconds,
+               "sent_tokens": est_tokens(json.dumps(args, ensure_ascii=False)), "returned_tokens": returned,
+               "offloaded_tokens": offloaded,
+               "saved_tokens": max(0, offloaded - returned) if ok and cat == "saved" else 0}
+        try:
+            self._req("POST", "/api/usage", json=rec, timeout=10)
+        except (LaoError, httpx.HTTPError):
+            pass
 
     # ------------------------------------------------------------ 道具
     def t_status(self, _args: dict) -> str:
@@ -267,6 +307,8 @@ class Bridge:
     def t_ask_local(self, args: dict) -> str:
         self._ensure_env(None)  # どの環境の AI でもよい。未選択のときだけ E1 を選ぶ
         r = self._req("POST", "/api/delegate", json=args, timeout=3600).json()
+        # 下請けの素材のうち、頼む側が書いて送った text は Claude がもう読んでいるので、節約には数えない
+        self._offloaded = max(0, int(r.get("material_tokens", 0)) - est_tokens(args.get("text", "")))
         notes = []
         if r.get("refs"):
             notes.append("取り込んだ資料：" + " ".join(r["refs"]))
@@ -368,6 +410,9 @@ class Bridge:
         r = self._req("POST", "/api/unload", timeout=300).json()
         return "下ろしました：" + (", ".join(r["unloaded"]) or "（読み込んでいるモデルはありませんでした）")
 
+    def t_usage(self, args: dict) -> str:
+        return self._req("GET", "/api/usage", params={"month": args.get("month", "")}).json()["summary"]
+
     def t_update(self, args: dict) -> str:
         from . import updater
         if not args.get("execute"):
@@ -378,6 +423,24 @@ class Bridge:
 
 
 REF_IN_TEXT = re.compile(r"\b[0-9a-f]{12}@\d+\b")
+
+
+def _image_tokens(part: dict) -> int:
+    """返した JPEG の大きさから、Claude がそれを見るトークンを見積もる。"""
+    try:
+        data = base64.b64decode(part.get("data", ""))
+        i = 2
+        while i < len(data) - 9:  # JPEG の SOF から幅と高さを読む
+            if data[i] != 0xFF:
+                break
+            marker, length = data[i + 1], int.from_bytes(data[i + 2:i + 4], "big")
+            if 0xC0 <= marker <= 0xC3:
+                h, w = int.from_bytes(data[i + 5:i + 7], "big"), int.from_bytes(data[i + 7:i + 9], "big")
+                return thumb_tokens(w, h)
+            i += 2 + length
+    except (ValueError, IndexError):
+        pass
+    return IMAGE_TOKENS
 
 
 def _clamp_wait(v: Any) -> int:

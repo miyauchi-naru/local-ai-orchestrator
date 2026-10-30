@@ -34,6 +34,7 @@ from .image_styles import StyleError
 from .library import Artifact
 from .lock import DELEGATE, PRIORITY
 from . import maintenance
+from .usage import est_tokens, summary_text
 from .orchestrator import TurnContext
 from .service import Service
 from .tools import ToolError, tools_for, validate
@@ -876,7 +877,8 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             text, pieces = await delegate_text(orch, task, materials, max_tokens, room)
         except Exception as e:  # noqa: BLE001 — 呼んだ側に理由を返す
             raise HTTPException(503, f"AI に頼めませんでした：{e}") from e
-        out = {"text": text, "model": service.runtime.conf.chat_component, "pieces": pieces}
+        out = {"text": text, "model": service.runtime.conf.chat_component, "pieces": pieces,
+               "material_tokens": sum(est_tokens(t) for _, t in materials)}
         if refs:
             out["refs"] = refs
         return out
@@ -953,6 +955,27 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         except StyleError as e:
             raise HTTPException(404, str(e)) from e
         return {"ok": True}
+
+    # ------------------------------------------------------------ トークンの記録
+    @app.post("/api/usage", dependencies=[Depends(auth)])
+    def add_usage(body: dict):
+        """lao mcp が道具の呼び出しごとに送る（節約の見積もり）。"""
+        return service.usage.add(body)
+
+    @app.get("/api/usage", dependencies=[Depends(auth)])
+    def get_usage(month: str = ""):
+        try:
+            r = service.usage.report(month)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {**r, "summary": summary_text(r)}
+
+    @app.get("/api/artifact/{ref}", dependencies=[Depends(auth)])
+    def artifact(ref: str):
+        try:
+            return art_json(service.library.get(ref))
+        except (KeyError, ValueError) as e:
+            raise HTTPException(404, str(e)) from e
 
     # ------------------------------------------------------------ 手入れ
     @app.get("/api/health", dependencies=[Depends(auth)])

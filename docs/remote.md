@@ -38,6 +38,7 @@ lao で組んだ PC（以下「Spark」）を、LAN 内のメイン PC の Claud
 | `styles` / `save_style` | 画像のスタイル（前置き・避けたい内容・縦横比）の一覧・保存・削除 | 短い文章 |
 | `health` | C・D の空き、GPU の温度、読み込み中のモデル、直近の失敗、注意 | 数行 |
 | `cleanup` | 作業の残り・古い記録を片づける（既定は一覧だけ。成果物は消さない） | 種類ごとの数と大きさ |
+| `usage` | Claude のトークンの記録（月ごと。下の「トークンの記録」） | 数行 |
 | `backup` / `unload` / `update` | 会話や設定の zip、モデルを今すぐ下ろす、lao を最新にする（既定は確認だけ。動かなければ元に戻す） | 短い文章 |
 | `list_artifacts` / `status` / `switch_environment` | 一覧、状態（健康の要点つき）、構成を指定した切り替え（`preload` で先に読み込む） | 短い文章 |
 
@@ -74,6 +75,15 @@ Spark で処理が重なったときは、推論ロックを次の順に渡し�
 
 スクリプトがすること：OpenSSH サーバーの導入と自動起動、パスワードでのログイン禁止（鍵だけ）、ログインできる利用者をこの人だけにする、ファイアウォールを同じ LAN のプライベートネットワークからだけにする、公開鍵の登録、受け取り箱（`D:\lao\inbox`）の作成、lao の画面を開くショートカット「lao」。`-AutostartServe` では PC の起動時（サインイン不要、S4U）とログオン時に lao serve を起動し、落ちたら 1 分おきに 3 回まで起動し直します（起動時の形で GPU が使えないときは `-ServeAtLogonOnly`）。
 
+## トークンの記録
+
+lao がどれだけ Claude のトークンを節約したかを、あとで見返せるように残します（どこにも送りません）。
+
+- **lao の側：** 道具の呼び出しごとに、Claude に返した量・Spark が代わりに読んだ量・節約できた量（＝代わりに読んだ量 − 返した量）の見積もりを `D:\lao\usage\lao-mcp-YYYY-MM.jsonl` に残します。ask_local は受け取り箱や成果物から Spark が読んだ素材（Claude が自分で書いて送った text は数えない）、describe_media は Claude が画像を見る分（1 枚約 1,600、動画は 8 コマ分）を節約として数えます。生成と、音声・動画の理解は「Claude にできないこと」として回数と作業時間を数えます
+- **メイン PC の側：** `spark.ps1 usage` が Claude Code の会話記録（`~/.claude/projects`）から日ごとの入力・出力・キャッシュのトークンと lao の呼び出し回数を数え、`D:\lao\usage\claude-code\` へ送ります。送るのは数だけで、会話の中身は送りません。毎日 12:30 のタスクと `/spark-usage` が流します
+- **見方：** Claude Code で `/spark-usage`、lao の画面の「ふりかえり」（グラフつき）、Spark で `lao usage --month 2026-11`（`--json` で動画やグラフ用の数字）
+- トークンは見積もりです（英数字 4 文字で 1、日本語は 1 文字で 1）。Claude Code の使用量はキャッシュから読んだ分を料金に合わせて 1/10 で数えます
+
 ## 準備（メイン PC 側）
 
 Windows なら `scripts\prepare-main-pc.ps1` がすべて行います（[arrival.md](arrival.md)）。利用者がメイン PC で使うのは Claude Code と lao の画面だけで、ssh や scp は Claude が下の `spark.ps1` で行います。
@@ -82,9 +92,9 @@ Windows なら `scripts\prepare-main-pc.ps1` がすべて行います（[arrival
 |---|---|
 | 鍵 | `~/.ssh/id_ed25519` が無ければ作る |
 | 接続 | `~/.ssh/config` に `Host spark`、初回のホスト鍵の登録、`lao mcp --check` |
-| Claude Code | lao の登録（`claude mcp add lao --scope user -- ssh -o ClearAllForwardings=yes spark C:/lao/venv/Scripts/lao.exe mcp`）、MCP の待ち時間 15 分、`~/.claude/CLAUDE.md` に使い方（[main-pc/CLAUDE-lao.md](../scripts/main-pc/CLAUDE-lao.md)）、コマンド `/spark-image` `/spark-video` `/spark-summary` `/spark-status` `/spark-get` `/spark-open`、lao の道具と spark.ps1 を確認なしで使う許可 |
-| やりとりの道具 | `~/.lao/spark.ps1`（put・get・check・wake・open・tunnel・backup）と `~/.lao/spark.json`（PC 名・IP・MAC） |
-| 常駐 | ログオン時に lao の画面用のトンネル（127.0.0.1:8710）を張り続けるタスク `lao-spark-tunnel`、毎日バックアップを取ってくるタスク `lao-spark-backup` |
+| Claude Code | lao の登録（`claude mcp add lao --scope user -- ssh -o ClearAllForwardings=yes spark C:/lao/venv/Scripts/lao.exe mcp`）、MCP の待ち時間 15 分、`~/.claude/CLAUDE.md` に使い方（[main-pc/CLAUDE-lao.md](../scripts/main-pc/CLAUDE-lao.md)）、コマンド `/spark-image` `/spark-video` `/spark-summary` `/spark-status` `/spark-get` `/spark-open` `/spark-usage`、lao の道具と spark.ps1 を確認なしで使う許可 |
+| やりとりの道具 | `~/.lao/spark.ps1`（put・get・check・wake・open・tunnel・backup・usage）と `~/.lao/spark.json`（PC 名・IP・MAC） |
+| 常駐 | ログオン時に lao の画面用のトンネル（127.0.0.1:8710）を張り続けるタスク `lao-spark-tunnel`、毎日バックアップを取ってきて Claude Code の使用量を送るタスク `lao-spark-backup` |
 | 画面 | デスクトップとスタートメニューの「lao（Spark）」（押すと Edge のアプリ窓で lao の画面が開く。API キーは保存せず、開くたびに Spark から受け取る） |
 
 ## ファイルのやりとり（Claude が行う）

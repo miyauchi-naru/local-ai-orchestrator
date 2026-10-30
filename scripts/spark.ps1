@@ -12,13 +12,15 @@
     open                lao の画面を開く（トンネルが無ければ張ってから）
     tunnel              lao の画面用のトンネル（127.0.0.1:8710）を張り続ける。切れたら張り直す（ログオン時のタスクが使う）
     backup              Spark の最新のバックアップを ~/Documents/lao-backup に取ってくる（毎日のタスクが使う）
+    usage [日数]        この PC の Claude Code が使ったトークンを会話記録（~/.claude/projects）から日ごとに数え、
+                        Spark へ送る（既定は直近 3 日。毎日のタスクと /spark-usage が使う。数を送るだけで会話の中身は送らない）
 
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File ~/.lao/spark.ps1 put .\report.pdf
   powershell -NoProfile -ExecutionPolicy Bypass -File ~/.lao/spark.ps1 get "D:/lao/library/0123456789ab/image.png"
 #>
 param(
-  [Parameter(Position = 0)][ValidateSet("put", "get", "check", "wake", "open", "tunnel", "backup")][string]$Command = "check",
+  [Parameter(Position = 0)][ValidateSet("put", "get", "check", "wake", "open", "tunnel", "backup", "usage")][string]$Command = "check",
   [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Rest = @()
 )
 $ErrorActionPreference = "Stop"
@@ -125,5 +127,52 @@ switch ($Command) {
     if ($LASTEXITCODE -ne 0) { throw "バックアップを取ってこられませんでした" }
     Get-ChildItem $dst -Filter "lao-*.zip" | Sort-Object Name -Descending | Select-Object -Skip 30 | Remove-Item -Force
     Write-Output "バックアップを保存しました：$dst\$(Split-Path $path.Trim() -Leaf)"
+  }
+  "usage" {
+    $days = if ($Rest) { [int]$Rest[0] } else { 3 }
+    $since = (Get-Date).Date.AddDays(-($days - 1))
+    $sinceKey = $since.ToString("yyyy-MM-dd")
+    $projects = Join-Path $HOME ".claude\projects"
+    $byMsg = @{}   # 同じ返答が内容ごとに何行かに分かれて残るので、返答の id で 1 つにまとめる
+    $calls = @{}
+    if (Test-Path $projects) {
+      Get-ChildItem $projects -Recurse -Filter *.jsonl | Where-Object LastWriteTime -ge $since | ForEach-Object {
+        foreach ($line in [IO.File]::ReadLines($_.FullName)) {
+          if ($line -notmatch '"type":"assistant"') { continue }
+          try { $d = $line | ConvertFrom-Json } catch { continue }
+          $m = $d.message
+          if (-not $m -or -not $m.usage -or -not $d.timestamp) { continue }
+          $ts = if ($d.timestamp -is [datetime]) { $d.timestamp.ToLocalTime() } else { [DateTimeOffset]::Parse($d.timestamp).LocalDateTime }
+          $day = $ts.ToString("yyyy-MM-dd")
+          if ($day -lt $sinceKey) { continue }
+          $byMsg["$($m.id)"] = @{ day = $day; u = $m.usage }
+          foreach ($c in @($m.content)) { if ($c.type -eq "tool_use" -and "$($c.name)" -like "mcp__lao__*") { $calls[$day] = 1 + [int]$calls[$day] } }
+        }
+      }
+    }
+    $agg = @{}
+    foreach ($v in $byMsg.Values) {
+      if (-not $agg[$v.day]) { $agg[$v.day] = [ordered]@{ date = $v.day; input_tokens = 0; output_tokens = 0; cache_read_input_tokens = 0; cache_creation_input_tokens = 0; messages = 0; lao_calls = 0 } }
+      $a = $agg[$v.day]
+      foreach ($k in "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens") { $a[$k] += [long]$v.u.$k }
+      $a.messages += 1
+    }
+    if (-not $agg.Count) { Write-Output "直近 $days 日の Claude Code の記録はありません"; exit 0 }
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) "lao-usage"
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    foreach ($a in $agg.Values) {
+      $a.lao_calls = [int]$calls[$a.date]
+      [IO.File]::WriteAllText((Join-Path $tmp "$($a.date).json"), ($a | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+    }
+    $remote = Get-Opt "usage" "D:/lao/usage/claude-code"
+    $mk = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("New-Item -ItemType Directory -Force -Path '$remote' | Out-Null"))
+    ssh @SshOpts spark "powershell -NoProfile -EncodedCommand $mk" | Out-Null
+    scp @SshOpts -q (Get-ChildItem $tmp -Filter *.json | ForEach-Object FullName) "spark:$remote/"
+    if ($LASTEXITCODE -ne 0) { throw "Spark へ送れませんでした（spark.ps1 check で確かめてください）" }
+    foreach ($a in $agg.Values | Sort-Object { $_.date }) {
+      Write-Output ("{0}：入力 {1:N0}、出力 {2:N0}、キャッシュ読み {3:N0}、キャッシュ書き {4:N0}、lao の呼び出し {5} 回" -f $a.date, $a.input_tokens, $a.output_tokens, $a.cache_read_input_tokens, $a.cache_creation_input_tokens, $a.lao_calls)
+    }
+    Write-Output "Spark に送りました（lao の usage か、画面のふりかえりで見られます）"
   }
 }

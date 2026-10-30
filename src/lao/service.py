@@ -23,6 +23,7 @@ from .search import DocIndex
 from .schedule import ScheduleError, Task, TaskStore
 from .skills import SkillStore
 from .image_styles import StyleStore
+from .usage import UsageLog
 from .runtime import Runtime, default_engine_factory
 
 
@@ -80,6 +81,7 @@ class Service:
         self.root = root
         self.tasks = TaskStore(root / "tasks.json")
         self.styles = StyleStore(root / "image_styles.json")
+        self.usage = UsageLog(root / "usage")
         self.index = DocIndex(self.library, root / "index", embedder or self._embedder(root / "logs"))
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
