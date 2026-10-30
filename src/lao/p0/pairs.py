@@ -11,8 +11,10 @@
 
 あわせて、組み合わせごとにピークメモリ・読み直しの回数と時間・1 課題の時間を測り、
 予算（と、他のために空けておきたい量）に収まる組み合わせの中から推奨を選ぶ。
-判定は生成とは別の段階で、判定用の理解モデル（既定は課題ファイルの judge）が「はい／いいえ」で答える。
-メイン PC の Claude などに判定させたいときは、judge-sheet.json の答えを answers.json に書いて採点し直せる。
+判定は生成とは別の段階で、画像を見られる理解モデル（既定はカタログの全部）が一つずつ「はい／いいえ」で答える。
+判定役ごとに採点し、その中央値で順位を付ける。組み合わせ自身の会話モデルは、その組み合わせの判定から外す
+（自分の絵に甘くならないように）。判定役どうしの一致率も出し、判定が当てにならないときに分かるようにする。
+外部（例：Claude）に判定させたいときは、judge-sheet.json の答えを answers.json に書いて採点し直せる。
 
 測定はユーザーの「開始」指示の後、実機で行う。ここでは何もインストールしない。
 """
@@ -25,6 +27,7 @@ import datetime as dt
 import json
 import random
 import re
+import statistics
 import time
 import tomllib
 from dataclasses import dataclass, field
@@ -47,6 +50,7 @@ JUDGE_PROMPT = ("次の画像について答えてください。{note}質問：
                 "画像から確かにそう言えるときだけ「はい」、それ以外は「いいえ」と、一語だけで答えてください。")
 VIDEO_NOTE = "この画像は動画から等間隔に取った 4 コマを、左から時刻順に並べたものです。"
 DEFAULT_WEIGHTS = {"first": 0.35, "args": 0.15, "fix": 0.2, "edit": 0.2, "video": 0.1}
+LOW_AGREEMENT = 0.7  # 判定役どうしの一致率がこれより低ければ注意を出す
 
 
 class PairsError(ValueError):
@@ -103,7 +107,7 @@ def load_suite(path: Path) -> Suite:
         raise PairsError(f"{path.name}: [candidates] に chat と image を書いてください")
     weights = dict(DEFAULT_WEIGHTS)
     weights.update({k: float(v) for k, v in s.get("weights", {}).items() if k in DEFAULT_WEIGHTS})
-    return Suite(tasks, list(c["chat"]), list(c["image"]), list(c.get("video", [])), c.get("judge", ""),
+    return Suite(tasks, list(c["chat"]), list(c["image"]), list(c.get("video", [])), c.get("judge", "all"),
                  int(s.get("fix_rounds", 2)), int(s.get("repeats", 1)), int(s.get("seed", 1234)),
                  float(s.get("tie_points", 3)), float(s.get("reserve_gb", 0)), weights)
 
@@ -337,8 +341,26 @@ def sheet(results: list[dict], lib_path: Callable[[str, str], Path]) -> list[dic
     return items
 
 
+def judge_refs(spec: str, catalog: dict[str, Environment]) -> list[str]:
+    """判定役の一覧。"all" ならカタログで画像を見られる会話・理解の部品すべて（同じモデルは一つにまとめる）。"""
+    if spec.strip() != "all":
+        refs = [r.strip() for r in spec.split(",") if r.strip()]
+        for r in refs:
+            if "image" not in resolve(catalog, r)[2].capabilities:
+                raise PairsError(f"判定役 {r} は画像を見られません")
+        return refs
+    out, seen = [], set()
+    for env in catalog.values():
+        for conf in env.configurations.values():
+            for c in conf.components.values():
+                if c.role in ("chat", "perceive") and "image" in c.capabilities and c.model not in seen:
+                    seen.add(c.model)
+                    out.append(f"{env.id}.{conf.id}.{c.key}")
+    return out
+
+
 class LlamaJudge:
-    """判定用の理解モデル。生成の組み合わせとは別に、一つだけ読み込んで使う。"""
+    """判定用の理解モデル。生成の組み合わせとは別に、一つずつ読み込んで使う。"""
 
     def __init__(self, machine: MachineConfig, catalog: dict[str, Environment], ref: str, log_dir: Path,
                  engine_factory=None, memory_probe=None):
@@ -462,6 +484,49 @@ def _mean(xs: list[float]) -> float | None:
     return sum(xs) / len(xs) if xs else None
 
 
+def _median(xs: list) -> float | None:
+    xs = [x for x in xs if x is not None]
+    return round(statistics.median(xs), 1) if xs else None
+
+
+def combine(res: dict, tasks: dict[str, Task], answers: dict[str, dict], weights: dict[str, float]) -> dict:
+    """判定役ごとに採点し、中央値をとる。組み合わせ自身の会話モデルの判定は外す（全部外れるときは使う）。"""
+    own = res.get("models", {}).get("chat")
+    judges = [j for j in answers if j != own] or list(answers)
+    per = {j: score_pair(res, tasks, answers[j], weights) for j in judges}
+    first = next(iter(per.values()))
+    return {
+        "quality": _median([p["quality"] for p in per.values()]) or 0.0,
+        "parts": {k: _median([p["parts"][k] for p in per.values()]) for k in first["parts"]},
+        "final": _median([p["final"] for p in per.values()]),
+        "needless_redo": first["needless_redo"],
+        "seconds_per_task": first["seconds_per_task"],
+        "by_judge": {j: p["quality"] for j, p in per.items()},
+        "spread": round(max(p["quality"] for p in per.values()) - min(p["quality"] for p in per.values()), 1),
+        "self_excluded": own in answers and len(answers) > 1,
+    }
+
+
+def agreement(answers: dict[str, dict]) -> dict:
+    """判定役どうしの一致率（二者ごとと、全員が同じ答えだった割合）。"""
+    judges = list(answers)
+    keys = set.intersection(*(set(a) for a in answers.values())) if judges else set()
+    pairs, all_same, total = {}, 0, 0
+    for i, a in enumerate(judges):
+        for b in judges[i + 1:]:
+            same = n = 0
+            for k in keys:
+                for x, y in zip(answers[a][k], answers[b][k]):
+                    n += 1
+                    same += x is y
+            pairs[f"{a} / {b}"] = round(same / n, 3) if n else None
+    for k in keys:
+        for col in zip(*(answers[j][k] for j in judges)):
+            total += 1
+            all_same += len(set(col)) == 1
+    return {"pairs": pairs, "all": round(all_same / total, 3) if total and len(judges) > 1 else None}
+
+
 def rank(results: list[dict], budget_gb: float, reserve_gb: float, tie_points: float) -> dict:
     """予算から reserve を引いた量に収まる組み合わせの中で、品質が最上位から tie_points 以内なら軽い方を推す。"""
     limit = budget_gb - reserve_gb
@@ -490,24 +555,33 @@ def rank(results: list[dict], budget_gb: float, reserve_gb: float, tie_points: f
 
 def report_text(out: dict) -> str:
     r = out["ranking"]
+    judges = out.get("judges") or []
     lines = [f"# 組み合わせ評価（{out['timestamp']}）", "",
-             f"判定役：{out.get('judge') or '外部の答え（answers.json）'}　課題 {len(out['tasks'])} 件　"
+             f"判定役（{len(judges)}）：{'、'.join(judges) or 'なし'}　課題 {len(out['tasks'])} 件　"
              f"使える上限 {r['limit_gb']:.0f}GB（予算 {out['budget_gb']:.0f}GB − 空けておく {out['reserve_gb']:.0f}GB）", ""]
-    if out.get("judge_is_candidate"):
-        lines += ["注意：判定役が候補の会話モデルと同じモデルです。自分の絵に甘くなる恐れがあります。", ""]
+    ag = (out.get("agreement") or {}).get("all")
+    if ag is not None:
+        lines.append(f"判定役が全員同じ答えだった割合：{ag * 100:.0f}%")
+        if ag < LOW_AGREEMENT:
+            lines.append("注意：判定役どうしの答えが割れています。品質の差が小さい組み合わせは、画像を自分で見て確かめてください。")
+        lines.append("")
+    if len(judges) == 1:
+        lines += ["注意：判定役が 1 つだけです。その会話モデルを含む組み合わせは、自分の絵を判定しています。", ""]
     lines += [f"推奨：**{r['recommended']}**" if r["recommended"] else "推奨：上限に収まる組み合わせがありません", "",
-              "| 組み合わせ | 品質 | 初回 | 引数 | 見て直す | 修正 | 動画 | ピーク GB | 読み直し | 秒/課題 | 判定 |",
-              "|---|---|---|---|---|---|---|---|---|---|---|"]
+              "| 組み合わせ | 品質 | ばらつき | 初回 | 引数 | 見て直す | 修正 | 動画 | ピーク GB | 読み直し | 秒/課題 | 判定 |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     by_id = {x["id"]: x for x in out["results"]}
     for row in r["rows"]:
-        p = by_id[row["id"]].get("score", {}).get("parts", {})
+        sc = by_id[row["id"]].get("score", {})
+        p = sc.get("parts", {})
         cell = lambda k: "—" if p.get(k) is None else f"{p[k]:.0f}"  # noqa: E731
         mark = ("★" if row["id"] == r["recommended"] else "") + ("◆" if row.get("pareto") else "")
-        lines.append(f"| {row['id']} {mark} | {row['quality']:.1f} | {cell('first')} | {cell('args')} | {cell('fix')} | "
+        lines.append(f"| {row['id']} {mark} | {row['quality']:.1f} | {sc.get('spread', 0):.0f} | {cell('first')} | {cell('args')} | {cell('fix')} | "
                      f"{cell('edit')} | {cell('video')} | {row['peak_gb']} | {row['reloads']} | {row['seconds_per_task']} | "
                      f"{'収まる' if row['fits'] else row['why']} |")
     lines += ["", "★ 推奨　◆ 品質とメモリの両方で上回る組み合わせが無い",
-              "品質は 初回・引数・見て直す・修正・動画 の重み付き平均（課題ファイルの weights）。"
+              "品質は 初回・引数・見て直す・修正・動画 の重み付き平均（課題ファイルの weights）を判定役ごとに出した中央値。"
+              "組み合わせ自身の会話モデルは、その組み合わせの判定役から外す。ばらつきは判定役ごとの品質の最大と最小の差。"
               "見て直すは、初回に足りなかった確認項目のうち直して取り戻せた割合（画像を見られない会話モデルは 0）。",
               "読み直しが 0 なら、会話モデルと生成モデルが同時に載ったまま動いた。"]
     return "\n".join(lines) + "\n"
@@ -521,22 +595,32 @@ def _lib_path(out_dir: Path):
     return f
 
 
-def finish(out_dir: Path, answers: dict[str, list], judge_label: str = "") -> dict:
+def normalize_answers(raw: dict, label: str = "") -> dict[str, dict]:
+    """answers.json を {判定役: {鍵: [答え]}} にそろえる（鍵: [答え] だけなら判定役 1 つとみなす）。"""
+    if raw and all(isinstance(v, list) for v in raw.values()):
+        return {label or "外部": raw}
+    return raw
+
+
+def finish(out_dir: Path, answers: dict[str, dict]) -> dict:
     """生成の記録と判定の答えから採点し、result.json と report.md を書く。"""
     data = json.loads((out_dir / "runs.json").read_text(encoding="utf-8"))
+    if not answers:
+        raise PairsError("判定の答えがありません")
     suite_tasks = {t["id"]: Task(**t) for t in data["tasks"]}
     for res in data["results"]:
-        res["score"] = score_pair(res, suite_tasks, answers, data["weights"])
+        res["score"] = combine(res, suite_tasks, answers, data["weights"])
     data["ranking"] = rank(data["results"], data["budget_gb"], data["reserve_gb"], data["tie_points"])
-    data["judge"] = judge_label or data.get("judge", "")
+    data["judges"] = list(answers)
+    data["agreement"] = agreement(answers)
     (out_dir / "result.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     (out_dir / "report.md").write_text(report_text(data), encoding="utf-8")
     return data
 
 
 def run(machine: MachineConfig, catalog_dir: Path, suite_path: Path, results_dir: Path, *, only: str = "",
-        judge_ref: str | None = None, no_judge: bool = False, engine_factory=None, memory_probe=None,
-        judge_ask: Callable[[Path, str, bool], Awaitable[bool | None]] | None = None) -> Path:
+        judge: str | None = None, no_judge: bool = False, engine_factory=None, memory_probe=None,
+        judge_asks: dict[str, Callable[[Path, str, bool], Awaitable[bool | None]]] | None = None) -> Path:
     catalog = load_catalog(catalog_dir)
     suite = load_suite(suite_path)
     pairs = pairs_of(suite, catalog, only)
@@ -555,10 +639,9 @@ def run(machine: MachineConfig, catalog_dir: Path, suite_path: Path, results_dir
         print(f"== {p.id} ==", flush=True)
         results.append(asyncio.run(run_pair(machine, catalog_dir, catalog, p, suite, out_dir, engine_factory,
                                             memory_probe)))
-    judge_ref = judge_ref if judge_ref is not None else suite.judge
     data = {"timestamp": stamp, "tasks": [dataclasses.asdict(t) for t in suite.tasks], "budget_gb": machine.budget_gb,
             "reserve_gb": suite.reserve_gb, "tie_points": suite.tie_points, "weights": suite.weights,
-            "judge": judge_ref, "judge_is_candidate": False, "results": results}
+            "results": results}
     (out_dir / "runs.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     items = sheet(results, _lib_path(out_dir))
     tasks = {t.id: t for t in suite.tasks}
@@ -571,28 +654,35 @@ def run(machine: MachineConfig, catalog_dir: Path, suite_path: Path, results_dir
         return out_dir
     media = Media(*(machine.raw.get("engines", {}).get("ffmpeg", {}).get(k, d)
                     for k, d in (("binary", "ffmpeg"), ("ffprobe", "ffprobe"))))
-    judge = None
-    if judge_ask is None:
-        if not judge_ref:
-            raise PairsError("判定役（[candidates] judge か --judge）がありません。--no-judge で生成だけ行えます")
-        judge = LlamaJudge(machine, catalog, judge_ref, out_dir / "logs", memory_probe=memory_probe)
-        judge_ask = judge.ask
-        chat_models = {resolve(catalog, c)[2].model for c in suite.chat}
-        if judge.model in chat_models:
-            data["judge_is_candidate"] = True
-            (out_dir / "runs.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("== 判定 ==", flush=True)
+    answers: dict[str, dict] = {}
+    if judge_asks is not None:
+        for label, ask in judge_asks.items():
+            print(f"== 判定：{label} ==", flush=True)
+            answers[label] = asyncio.run(judge_all(items, tasks, ask, media, out_dir / "judge-tmp"))
+    else:
+        refs = judge_refs(judge if judge is not None else suite.judge, catalog)
+        for ref in refs:
+            env, conf, c = resolve(catalog, ref)
+            if c.engine == "llama" and not (machine.path_of("models") / conf.id / c.key).exists():
+                print(f"== 判定：{ref}：モデル未取得のため省略")
+                continue
+            print(f"== 判定：{ref}（{c.model}） ==", flush=True)
+            jd = LlamaJudge(machine, catalog, ref, out_dir / "logs", memory_probe=memory_probe)
 
-    async def _judge():
-        try:
-            return await judge_all(items, tasks, judge_ask, media, out_dir / "judge-tmp")
-        finally:
-            if judge:
-                await judge.close()
+            async def _judge(jd=jd):
+                try:
+                    return await judge_all(items, tasks, jd.ask, media, out_dir / "judge-tmp")
+                finally:
+                    await jd.close()
 
-    answers = asyncio.run(_judge())
+            try:
+                answers[c.model] = asyncio.run(_judge())
+            except Exception as e:  # noqa: BLE001 一つの判定役が動かなくても、残りで採点する
+                print(f"  判定できませんでした：{type(e).__name__}: {e}")
+    if not answers:
+        raise PairsError("判定できる判定役がありませんでした。--no-judge で生成だけ行えます")
     (out_dir / "answers.json").write_text(json.dumps(answers, ensure_ascii=False, indent=1), encoding="utf-8")
-    finish(out_dir, answers, judge_ref)
+    finish(out_dir, answers)
     print(f"\n結果：{out_dir / 'report.md'}")
     return out_dir
 

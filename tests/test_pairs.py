@@ -4,8 +4,8 @@ import re
 import pytest
 
 from lao.backends.fake import FakeLlama, _call, _msg, _text, fake_engine_factory
-from lao.p0.pairs import (PairsError, Task, build, load_suite, pairs_of, parse_answer, rank, report_text, run,
-                          score_pair)
+from lao.p0.pairs import (PairsError, Task, agreement, build, combine, judge_refs, load_suite, pairs_of,
+                          parse_answer, rank, report_text, run, score_pair)
 
 REF = re.compile(r"[0-9a-f]{12}@\d+")
 
@@ -132,13 +132,16 @@ def test_parse_answer():
 def test_run_end_to_end_with_fake_engines(tmp_path, machine, catalog_dir, suite_path):
     asked = []
 
+    async def no(image, question, video):  # gemma の組み合わせ自身の会話モデル：何でも「いいえ」と言う
+        return False
+
     async def judge(image, question, video):
         asked.append((question, video))
         assert image.exists()
         return question != "横長である" or len([q for q, _ in asked if q == "横長である"]) > 1
 
     out = run(machine, catalog_dir, suite_path, tmp_path / "results", engine_factory=factory(),
-              memory_probe=lambda: (128.0, 120.0), judge_ask=judge)
+              memory_probe=lambda: (128.0, 120.0), judge_asks={"judge-a": judge, "gemma-4-26B-A4B-it": no})
     data = json.loads((out / "result.json").read_text(encoding="utf-8"))
     by = {r["id"]: r for r in data["results"]}
     gemma = by["e2-standard-chat+e2-standard-imagegen+e4-ltx-videogen"]
@@ -156,9 +159,12 @@ def test_run_end_to_end_with_fake_engines(tmp_path, machine, catalog_dir, suite_
     assert oss["score"]["parts"]["fix"] == 0.0  # 画像を見られない
     # 全部品の常駐は予算を超えるので、読み直しが起きる
     assert gemma["estimate_gb"] > data["budget_gb"] and gemma["reloads"] > 0
+    assert set(gemma["score"]["by_judge"]) == {"judge-a"}  # 自分の会話モデルの判定は外す
+    assert set(oss["score"]["by_judge"]) == {"judge-a", "gemma-4-26B-A4B-it"}
+    assert data["agreement"]["all"] is not None
     assert data["ranking"]["recommended"] == gemma["id"]
     report = (out / "report.md").read_text(encoding="utf-8")
-    assert "推奨" in report and gemma["id"] in report
+    assert "推奨" in report and gemma["id"] in report and "判定役が全員同じ答えだった割合" in report
     sheet = json.loads((out / "judge-sheet.json").read_text(encoding="utf-8"))
     assert any(it["video"] and it["questions"] == ["波が動いている"] for it in sheet)
 
@@ -177,7 +183,7 @@ def test_no_judge_then_score_from_answers(tmp_path, machine, catalog_dir, suite_
     assert main(["--config", str(cfg), "--catalog", str(catalog_dir), "p0", "pairs", "--score", str(out),
                  "--judge", "claude"]) == 0
     data = json.loads((out / "result.json").read_text(encoding="utf-8"))
-    assert data["judge"] == "claude" and data["results"][0]["score"]["parts"]["first"] == 100.0
+    assert data["judges"] == ["claude"] and data["results"][0]["score"]["parts"]["first"] == 100.0
 
 
 def test_score_counts_recovered_items_and_needless_redo():
@@ -214,3 +220,29 @@ def test_rank_prefers_lighter_pair_within_tie_and_excludes_over_limit():
     text = report_text({"timestamp": "t", "tasks": [], "budget_gb": 96, "reserve_gb": 40, "ranking": r,
                         "results": results, "judge": "j"})
     assert "small ★" in text
+
+
+def test_judge_refs_all_lists_each_image_model_once(catalog):
+    refs = judge_refs("all", catalog)
+    assert "e1.e1-standard.perceiver" in refs and "e1.e1-standard.reasoner" not in refs  # gpt-oss は画像を見られない
+    # Gemma 4 E4B は E1・E4 に何度も出てくるが、判定役としては 1 回だけ
+    assert sum(1 for r in refs if r.endswith((".perceiver", "e4-ltx.chat", "e4-wan.chat", "e3-standard.chat"))) == 1
+    with pytest.raises(PairsError, match="画像を見られません"):
+        judge_refs("e1.e1-standard.reasoner", catalog)
+
+
+def test_combine_takes_median_and_skips_own_model():
+    tasks = {"a": Task("a", "image", "r", ["x", "y"])}
+    turn = {"invalid": 0, "errors": [], "calls": [], "text": ""}
+    res = {"id": "p", "can_see": False, "seconds": 1, "models": {"chat": "own"},
+           "records": [{"task": "a", "repeat": 0, "images": ["1"], "turns": [turn]}]}
+    w = {"first": 1}
+    answers = {"own": {"p|a|0|r0": [True, True]}, "j1": {"p|a|0|r0": [True, False]},
+               "j2": {"p|a|0|r0": [False, False]}, "j3": {"p|a|0|r0": [True, True]}}
+    s = combine(res, tasks, answers, w)
+    assert set(s["by_judge"]) == {"j1", "j2", "j3"} and s["self_excluded"]
+    assert s["quality"] == 50.0 and s["spread"] == 100.0
+    # 自分しか判定役がいないときは使う
+    assert combine(res, tasks, {"own": answers["own"]}, w)["quality"] == 100.0
+    ag = agreement({"j1": answers["j1"], "j3": answers["j3"]})
+    assert ag["all"] == 0.5 and ag["pairs"]["j1 / j3"] == 0.5
