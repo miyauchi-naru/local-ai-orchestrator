@@ -30,6 +30,7 @@ RTX Spark（128GB 統合メモリ、Windows 11 on Arm）1台で、四つの目�
 2. **点検**：`lao doctor`（Arm64、メモリ、ドライバ、llama-server、ffmpeg、Ollama 不使用、カタログの整合）
 3. **測定**：`lao p0 run --gpu-python <PyTorch入りのPython>`
    - GPU が実際に確保できるメモリ量、各モデルのロード時間・速度・ピークメモリを測り、`p0-results/` に保存します。
+   - `lao p0 pairs` で、会話モデル＋生成モデルの組み合わせを「狙いどおりに作れるか」とメモリで比べます（[docs/arrival.md](docs/arrival.md) の評価）。
 4. **設定値の提案**：`lao p0 propose` → `config/machine.proposed.toml` ができるので、確認して `config/machine.toml` に反映します。
 5. **カタログの TODO を埋める**（`grep -rn "TODO(P0)" catalog config scripts`）
    - モデルの配布元・ファイル・ライセンスを確認し、`status = "verified"` にします。
@@ -132,4 +133,5 @@ src/lao/
   web/            画面（index.html、PWA の manifest と service worker）
   backends/       llama-server、ComfyUI、TTS、ダミー
   p0/probe.py     実機の測定と設定値の提案
+  p0/pairs.py     会話モデル＋生成モデルの組み合わせ評価（再現度・引数・見て直す力・修正・メモリ）
 ```

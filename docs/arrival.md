@@ -126,6 +126,9 @@ lao の側で行うことと、スクリプトで変えられないことは次�
 3. **画像・動画（E2・E4）：** ComfyUI でワークフローを作り、API 形式で書き出して `catalog/workflows/` に置き、`bindings` を埋めます（[comfyui-workflows.md](comfyui-workflows.md)）。
 4. **読み上げ（E3）：** TTS の候補を選び、[tts-contract.md](tts-contract.md) の形の中継を用意して `[engines.tts]` に書きます。
 5. **評価：** 日本語の評価課題（[prep.md](prep.md) 4 章）を各候補で行います。仕上がりの良し悪しは利用者が見て決めます。
+   - **会話モデル＋生成モデルの組み合わせ：** `lao p0 pairs`。会話モデルが lao のツールで ComfyUI を使い、日本語の依頼どおりの絵・動画にできるかを、メモリと合わせて比べます（課題と候補は `catalog/shared/pairs.toml`）。見るのは、初回の再現度、引数の選び方（縦横比・避けたい内容・修正と新規の使い分け）、出来た画像を見て直す力、修正指示への追従、動画の動きの指定です。組み合わせごとのピークメモリと読み直しの回数も測り、予算（`reserve_gb` で他のために空ける量を引いたもの）に収まる中から、品質が最上位から `tie_points` 以内で一番軽い組み合わせを推します。結果は `p0-results\pairs-*\report.md`。
+   - 判定は理解モデルが「はい／いいえ」で答えます。判定役が候補と同じモデルだと甘くなるので注意が出ます。メイン PC の Claude に判定させるときは `--no-judge` で生成だけ行い、`judge-sheet.json` の画像と質問の答えを同じフォルダの `answers.json`（`{"鍵": [true, false, ...]}`）に書いて `lao p0 pairs --score <フォルダ> --judge claude` で採点します。
+   - 組み合わせ数 × 課題 20 件 × 最大 4 枚なので数時間かかります。`--only gemma` のように名前で絞れます。
 6. **使い勝手の確認（実機でしか分からないこと）：**
    - Spark を再起動し、**サインインせずに**メイン PC から `lao の status を見て` が通るか。通っても画像を 1 枚作り、GPU が使えているか（遅すぎないか）を見る。だめなら `setup-spark.ps1 -Phase remote -ServeAtLogonOnly -Execute`
    - `nvidia-smi --query-gpu=temperature.gpu,clocks_event_reasons.hw_thermal_slowdown --format=csv` が値を返すか（返さなければ小休止と温度の知らせは働かない）。蓋を閉じて 30 分の連続生成を行い、温度と速度の変化から `[health] cooldown_above_c`・`cooldown_to_c` を決める

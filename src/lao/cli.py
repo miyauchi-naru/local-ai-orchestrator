@@ -1,4 +1,4 @@
-"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | configure | sandbox-check | mcp"""
+"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | p0 pairs | configure | sandbox-check | mcp"""
 
 from __future__ import annotations
 
@@ -200,16 +200,41 @@ def cmd_p0(args) -> int:
     config, catalog_dir = _paths(args)
     machine = load_machine(config)
     results = Path(args.results or REPO / "p0-results")
+    if args.p0 == "pairs":
+        return cmd_pairs(args, machine, catalog_dir, results)
     if args.p0 == "run":
         envs = args.envs.split(",") if args.envs else ["e1", "e2", "e3", "e4"]
         run(machine, catalog_dir, results, gpu_python=args.gpu_python, envs=envs, skip_models=args.skip_models)
         return 0
     out = config.with_name("machine.proposed.toml")
     r = propose(machine, results, out)
+    from .p0.pairs import latest
+    best = latest(results)
+    if best and best["ranking"]["recommended"]:
+        r["notes"].append(f"組み合わせ評価（{best['timestamp']}）の推奨：{best['ranking']['recommended']}"
+                          "（catalog の構成は手で選んでください）")
     print(f"測定結果：{r['source']}")
     for n in r["notes"]:
         print(f"  - {n}")
     print(f"\n提案：{out}\n内容を確認し、問題なければ {config.name} に上書きしてください")
+    return 0
+
+
+def cmd_pairs(args, machine, catalog_dir: Path, results: Path) -> int:
+    from .p0.pairs import PairsError, finish, run
+
+    try:
+        if args.score:
+            out = Path(args.score)
+            answers = json.loads((out / "answers.json").read_text(encoding="utf-8"))
+            finish(out, answers, args.judge or "")
+            print(f"採点しました：{out / 'report.md'}")
+            return 0
+        suite = Path(args.suite or catalog_dir / "shared" / "pairs.toml")
+        run(machine, catalog_dir, suite, results, only=args.only or "", judge_ref=args.judge, no_judge=args.no_judge)
+    except (PairsError, FileNotFoundError) as e:
+        print(e)
+        return 1
     return 0
 
 
@@ -315,11 +340,17 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--port", type=int)
     sp.add_argument("--fake", action="store_true", help="ダミーエンジンで画面と流れだけ確認する")
     sp = sub.add_parser("p0", help="実機検証")
-    sp.add_argument("p0", choices=["run", "propose"])
+    sp.add_argument("p0", choices=["run", "propose", "pairs"],
+                    help="run＝機器とモデルの測定、propose＝設定の提案、pairs＝会話モデル＋生成モデルの組み合わせ評価")
     sp.add_argument("--results", help="結果フォルダ")
     sp.add_argument("--gpu-python", help="PyTorch(CUDA) が入った Python。GPU の確保上限を測る")
     sp.add_argument("--envs", help="測る環境（例：e1,e2）")
     sp.add_argument("--skip-models", action="store_true")
+    sp.add_argument("--suite", help="pairs：課題と候補のファイル（既定 catalog/shared/pairs.toml）")
+    sp.add_argument("--only", help="pairs：名前にこの文字を含む組み合わせだけ測る")
+    sp.add_argument("--judge", help="pairs：判定役（環境.構成.部品）。課題ファイルの judge より優先")
+    sp.add_argument("--no-judge", action="store_true", help="pairs：生成だけ行い、判定は後で（answers.json）")
+    sp.add_argument("--score", metavar="DIR", help="pairs：DIR の answers.json で採点し直す")
     sp = sub.add_parser("configure", help="machine.toml をコメントを残したまま書き換える")
     sp.add_argument("--auto", action="store_true", help="ffmpeg・llama-server の場所と固定の API キーを自動で埋める")
     sp.add_argument("--apply-proposed", action="store_true", help="lao p0 propose の測定値を採用する")
