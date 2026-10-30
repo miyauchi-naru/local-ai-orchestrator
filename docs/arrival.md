@@ -123,7 +123,7 @@ lao の側で行うことと、スクリプトで変えられないことは次�
    powershell -ExecutionPolicy Bypass -File scripts\setup-spark.ps1 -Phase models -Envs e1 -Execute
    ```
    取得（C:\lao\models）→ 測定（`p0-results\`）→ `lao p0 propose` → `lao configure --apply-proposed`（GPU の上限、部品ごとのピーク・速度、打ち切り時間を machine.toml に採用）。E2〜E4 も同じです。全構成で約 400GB あるので、使う環境から順に取ります。
-3. **画像・動画（E2・E4）：** ComfyUI でワークフローを作り、API 形式で書き出して `catalog/workflows/` に置き、`bindings` を埋めます（[comfyui-workflows.md](comfyui-workflows.md)）。
+3. **画像・動画（E2・E4）：** ComfyUI でワークフローを作り、API 形式で書き出して `catalog/workflows/` に置き、`bindings` を埋めます（[comfyui-workflows.md](comfyui-workflows.md)）。 会話モデルが組み合わせて使うパターンも、同じように書き出して `lao pattern new` → `lao pattern approve` で用意します（[patterns.md](patterns.md)）。
 4. **読み上げ（E3）：** TTS の候補を選び、[tts-contract.md](tts-contract.md) の形の中継を用意して `[engines.tts]` に書きます。
 5. **評価：** 日本語の評価課題（[prep.md](prep.md) 4 章）を各候補で行います。仕上がりの良し悪しは利用者が見て決めます。
    - **会話モデル＋生成モデルの組み合わせ：** `lao p0 pairs`。会話モデルが lao のツールで ComfyUI を使い、日本語の依頼どおりの絵・動画にできるかを、メモリと合わせて比べます（課題と候補は `catalog/shared/pairs.toml`）。見るのは、初回の再現度、引数の選び方（縦横比・避けたい内容・修正と新規の使い分け）、出来た画像を見て直す力、修正指示への追従、動画の動きの指定です。組み合わせごとのピークメモリと読み直しの回数も測り、予算（`reserve_gb` で他のために空ける量を引いたもの）に収まる中から、品質が最上位から `tie_points` 以内で一番軽い組み合わせを推します。結果は `p0-results\pairs-*\report.md`。

@@ -1,4 +1,4 @@
-"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | p0 pairs | configure | sandbox-check | mcp"""
+"""コマンド：lao doctor | plan | install | serve | p0 run | p0 propose | p0 pairs | pattern | configure | sandbox-check | mcp"""
 
 from __future__ import annotations
 
@@ -238,6 +238,49 @@ def cmd_pairs(args, machine, catalog_dir: Path, results: Path) -> int:
     return 0
 
 
+def cmd_pattern(args) -> int:
+    """パターンの一覧・下書き・検証・承認（会話モデルが組み合わせて使う ComfyUI のワークフロー）。"""
+    from .config import load_catalog
+    from .p0.pairs import PairsError, resolve
+    from .patterns import PatternError, approve, check, load_allowlist, load_pattern, patterns_for, scaffold
+
+    _, catalog_dir = _paths(args)
+    catalog = load_catalog(catalog_dir)
+    try:
+        if args.action == "list":
+            for env in catalog.values():
+                for conf in env.configurations.values():
+                    for p in patterns_for(catalog_dir, conf):
+                        mark = "使える" if p.usable else ("問題あり" if p.problems else
+                                                         ("承認後に変更あり" if p.approved else "未承認"))
+                        print(f"{env.id}/{conf.id}.{p.component}  {p.id}  [{mark}]  {p.does or '、'.join(p.problems)}")
+            return 0
+        if args.action == "new":
+            if not (args.component and args.id):
+                print("--component（環境.構成.部品）と --id が要ります")
+                return 1
+            _, _, comp = resolve(catalog, args.component)
+            if not comp.raw.get("patterns"):
+                print(f"{args.component} には patterns のフォルダがありません（catalog に patterns = \"…\" を書く）")
+                return 1
+            out = scaffold(Path(args.target), catalog_dir / comp.raw["patterns"], args.id)
+            print(f"下書きを作りました：{out}\n説明（does・needs・good_for・avoid）と work_gb を書き、"
+                  f"lao pattern approve {out} で承認します")
+            return 0
+        p = load_pattern(Path(args.target))
+        allowed = load_allowlist(catalog_dir)
+        problems = check(p, allowed) if args.action == "check" else approve(p, allowed)
+    except (PatternError, PairsError, FileNotFoundError, ValueError) as e:
+        print(e)
+        return 1
+    for msg in problems:
+        print(f"[NG] {msg}")
+    if problems:
+        return 1
+    print("[OK] 問題ありません" if args.action == "check" else f"[OK] 承認しました：{p.id}")
+    return 0
+
+
 def cmd_sandbox_check(args) -> int:
     from .config import load_machine
     from .sandbox import SandboxConfig, check
@@ -357,6 +400,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--apply-proposed", action="store_true", help="lao p0 propose の測定値を採用する")
     sp.add_argument("--set", action="append", metavar="表.鍵=値", help="値を一つ書く（何度でも）")
     sp.add_argument("--dry-run", action="store_true", help="書き込まずに変更点だけ表示する")
+    sp = sub.add_parser("pattern", help="会話モデルが組み合わせて使う ComfyUI のパターン（一覧・下書き・検証・承認）")
+    sp.add_argument("action", choices=["list", "new", "check", "approve"])
+    sp.add_argument("target", nargs="?", default="", help="new：書き出したワークフロー JSON、check・approve：パターンの TOML")
+    sp.add_argument("--component", help="new：パターンを置く生成部品（環境.構成.部品）")
+    sp.add_argument("--id", help="new：パターンの id（catalog/patterns/README.md の標準の名前にそろえる）")
     sub.add_parser("sandbox-check", help="コード実行の箱が通信できず、PC のファイルも見えないことを確かめる")
     sp = sub.add_parser("mcp", help="別の PC の Claude Code から使う MCP サーバー（SSH 越しに起動する）")
     sp.add_argument("--check", action="store_true", help="lao serve につながるかだけ確かめる")
@@ -382,6 +430,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(args)
     if args.cmd == "configure":
         return cmd_configure(args)
+    if args.cmd == "pattern":
+        if args.action != "list" and not args.target:
+            print("ファイルを指定してください")
+            return 1
+        return cmd_pattern(args)
     if args.cmd == "sandbox-check":
         return cmd_sandbox_check(args)
     if args.cmd == "mcp":

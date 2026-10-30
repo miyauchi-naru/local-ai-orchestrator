@@ -40,6 +40,7 @@ mem = { weights_gb = 36, overhead_gb = 16 }
 capabilities = ["video_generate", "image_to_video", "audio_track"]
 max_seconds = 10
 workflow = "workflows/e4-ltx-i2v.json"
+patterns = "patterns/e4-ltx"
 bindings = { prompt = "", negative = "", seed = "", image = "", seconds = "", fps = "", width = "", height = "" }   # TODO(P0)
 
 # 無音。Apache-2.0
@@ -78,4 +79,5 @@ mem = { weights_gb = 66, overhead_gb = 12 }
 capabilities = ["video_generate", "image_to_video"]
 max_seconds = 5
 workflow = "workflows/e4-wan-i2v.json"
+patterns = "patterns/e4-wan"
 bindings = { prompt = "", negative = "", seed = "", image = "", frames = "", width = "", height = "" }   # TODO(P0)

@@ -38,6 +38,7 @@ from . import maintenance
 from .usage import est_tokens, summary_text
 from .orchestrator import TurnContext
 from .service import Service
+from .patterns import MAX_STEPS, PatternError, validate_recipe
 from .tools import ToolError, tools_for, validate
 
 MAX_UPLOAD_BYTES = 4 * 1024**3
@@ -47,7 +48,7 @@ MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".wav", ".mp3", ".m4a", ".fla
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_WAIT_SECONDS = 600
 MAX_INBOX_FILES = 200
-REMOTE_GENERATORS = {"generate_image", "edit_image", "generate_video", "generate_speech"}
+REMOTE_GENERATORS = {"generate_image", "edit_image", "generate_video", "generate_speech", "run_recipe"}
 MAX_DELEGATE_PIECES = 24  # 区切って読むときの上限（これより長い素材は分けて頼んでもらう）
 DELEGATE_SYSTEM = ("あなたは、別の PC で動く AI（Claude）から作業を任された下請けです。頼まれたことだけを、"
                    "前置きや感想なしで、必要な分だけ短く返してください。素材にないことは作らず、分からなければそう書いてください。"
@@ -144,7 +145,21 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     def status():
         if not service.runtime:
             return {"environment": None}
-        return {**service.runtime.status(), "tools": [t.name for t in tools_for(service.runtime.conf)]}
+        tools = [t.name for t in tools_for(service.runtime.conf)]
+        if service.orchestrator and any(p.usable for p in service.orchestrator.patterns()):
+            tools.append("run_recipe")
+        return {**service.runtime.status(), "tools": tools}
+
+    @app.get("/api/patterns", dependencies=[Depends(auth)])
+    def patterns():
+        """選ばれている構成で使えるパターン（run_recipe の手に書けるもの）。"""
+        orch = runtime_or_409()
+        return {"max_steps": MAX_STEPS, "patterns": [
+            {"id": p.id, "label": p.label, "does": p.does, "needs": p.needs, "good_for": p.good_for,
+             "avoid": p.avoid, "output": p.output, "needs_image": bool(p.images),
+             "params": {k: v.schema() | ({"default": v.default} if v.default is not None else {})
+                        for k, v in p.params.items()}}
+            for p in orch.patterns() if p.usable]}
 
     # ------------------------------------------------------------ 成果物
     @app.post("/api/upload", dependencies=[Depends(auth)])
@@ -797,6 +812,15 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         """画像・動画・音声の生成や、メディアの理解を、会話を通さずにジョブとして始める。"""
         orch = runtime_or_409()
         rt = service.runtime
+        if name == "run_recipe":
+            try:
+                steps = validate_recipe(body, orch.patterns(), service.library, orch.max_pixels)
+            except PatternError as e:
+                raise HTTPException(400, str(e)) from e
+            if service.free_chat_for_remote_generation():
+                FREE_OTHERS.set(True)
+            j = service.jobs.submit(name, rt.env.id, rt.conf.id, {"steps": steps}, orch._run_recipe(steps))
+            return job_json(j)
         try:
             args = validate(name, body, rt.conf, service.library)
             if args.get("style"):

@@ -1,0 +1,26 @@
+# パターンに使ってよい ComfyUI のノード（class_type）。lao pattern approve がこの一覧で検証する。
+# ここに無いノードを使うパターンは承認できない。足すときは、そのノードがファイルを好きな場所に読み書きしない、
+# ネットにつながない、コードを実行しないことを確かめてから足す（ComfyUI 本体の標準ノードが基本）。
+# P0 で実際のワークフローを書き出したら、使っているノードに合わせて見直す。
+allowed = [
+  # 読み込み（モデル名は各パターンの models の一覧で縛る）
+  "CheckpointLoaderSimple", "UNETLoader", "CLIPLoader", "DualCLIPLoader", "TripleCLIPLoader", "VAELoader",
+  "LoraLoader", "LoraLoaderModelOnly", "ControlNetLoader", "UpscaleModelLoader", "CLIPVisionLoader",
+  # 文章・条件
+  "CLIPTextEncode", "ConditioningCombine", "ConditioningSetArea", "ConditioningSetMask", "ConditioningZeroOut",
+  "ControlNetApplyAdvanced", "CLIPVisionEncode", "FluxGuidance", "InpaintModelConditioning",
+  "TextEncodeQwenImageEdit", "TextEncodeQwenImageEditPlus",
+  # 生成
+  "KSampler", "KSamplerAdvanced", "SamplerCustomAdvanced", "KSamplerSelect", "BasicScheduler", "BasicGuider",
+  "CFGGuider", "RandomNoise", "ModelSamplingAuraFlow", "ModelSamplingSD3", "ModelSamplingFlux",
+  "EmptyLatentImage", "EmptySD3LatentImage", "EmptyHunyuanLatentVideo", "SetLatentNoiseMask",
+  "VAEEncode", "VAEDecode", "VAEEncodeForInpaint", "VAEDecodeTiled", "VAEEncodeTiled", "LatentUpscaleBy",
+  # 画像の加工
+  "LoadImage", "LoadImageMask", "ImageScale", "ImageScaleBy", "ImageScaleToTotalPixels", "ImageUpscaleWithModel",
+  "ImageCrop", "ImagePadForOutpaint", "ImageCompositeMasked", "ImageInvert", "ImageBlur", "ImageSharpen",
+  "Canny", "SolidMask", "MaskComposite", "GrowMask", "FeatherMask", "ImageToMask", "MaskToImage", "CropMask",
+  # 動画
+  "WanImageToVideo", "LTXVImgToVideo", "LTXVConditioning", "LTXVScheduler", "LTXVPreprocess", "CreateVideo",
+  # 保存（lao が出力を受け取る）
+  "SaveImage", "SaveVideo", "SaveAnimatedWEBP",
+]

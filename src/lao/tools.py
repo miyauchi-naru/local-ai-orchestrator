@@ -93,6 +93,10 @@ ALL_TOOLS = [
             "count": Param("integer", "枚数（seed を 1 ずつ変えて作る。既定 1）", minimum=1, maximum=8),
             "style": Param("string", "保存したスタイルの名前（前置き・避けたい内容・縦横比を足す）", max_length=40),
             "seed": Param("integer", "乱数シード", minimum=0, maximum=2**32 - 1),
+            "steps": Param("integer", "描き込みの回数（多いほど細かいが遅い。省くとモデルの標準）", minimum=1, maximum=80),
+            "cfg": Param("number", "依頼文に従う強さ（省くとモデルの標準）", minimum=0, maximum=20),
+            "lora": Param("string", "画風などを足す追加モデル（このモデルで許可したものだけ）", max_length=200),
+            "lora_strength": Param("number", "lora の効き（既定 1.0）", minimum=-2, maximum=2),
         },
     ),
     Tool(
