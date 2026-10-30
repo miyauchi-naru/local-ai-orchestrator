@@ -26,7 +26,8 @@ from .memory import kv_cache_gb
 from .runtime import NotAdmitted, Runtime
 from .documents import DocumentError, best_chunks, extract_text
 from .folders import FolderError, Folders
-from .image_styles import StyleError, StyleStore, image_size
+from .image_styles import ASPECTS, StyleError, StyleStore, image_size
+from .patterns import PatternError, patterns_for, recipe_schema, shortlist, validate_recipe
 from .sandbox import Sandbox, SandboxError
 from .search import DocIndex
 from .tools import ToolError, tools_for, validate
@@ -280,6 +281,8 @@ class Orchestrator:
         gpu = rt.machine.raw.get("gpu", {})
         self.video_segment_seconds = float(gpu.get("video_segment_seconds", 5))
         self.tts_chunk_chars = int(gpu.get("tts_chunk_chars", 200))
+        self.max_pixels = int(rt.machine.raw.get("engines", {}).get("comfyui", {}).get("max_pixels", 4_194_304))
+        self._patterns = None
 
     # ------------------------------------------------------------------ 会話
     @property
@@ -298,6 +301,9 @@ class Orchestrator:
             tools.append(SCHEDULE_SCHEMA)
         if self.sandbox and self.sandbox.conf.enabled:
             tools.append(RUN_CODE_SCHEMA)
+        shown = shortlist(self.patterns(), last_user_text(messages), self._has_image(messages, attachments))
+        if shown:
+            tools.append(recipe_schema(shown))
         if tc.skills:
             tools.append(use_skill_schema(tc.skills))
         if depth == 0:
@@ -309,6 +315,24 @@ class Orchestrator:
                            doc_budget=int(self.context_limit * 0.4))
         convo = [{"role": "system", "content": sp}] + [m for m in messages if m.get("role") != "system"]
         return convo, tools
+
+    def patterns(self):
+        """この構成の生成部品のパターン（承認したものだけが使える）。"""
+        if self._patterns is None:
+            self._patterns = patterns_for(self.catalog_dir, self.rt.conf)
+        return self._patterns
+
+    def _has_image(self, messages: list[dict], attachments: list[str]) -> bool:
+        refs = list(attachments) + REF_IN_TEXT.findall(json.dumps(
+            [m.get("content") for m in messages if isinstance(m.get("content"), str)], ensure_ascii=False))
+        for r in refs:
+            try:
+                if self.library.get(r).kind == "image":
+                    return True
+            except (KeyError, ValueError):
+                continue
+        return any(isinstance(m.get("content"), list) and any(p.get("type") == "image_url" for p in m["content"]
+                                                              if isinstance(p, dict)) for m in messages)
 
     async def measure(self, messages: list[dict], attachments: list[str] | None = None,
                       tc: TurnContext | None = None) -> int:
@@ -412,6 +436,24 @@ class Orchestrator:
                         yield Event("memory", text)
                         yield Event("progress", f"覚えました：{text}")
                     result = {"ok": bool(text)}
+                elif name == "run_recipe":
+                    try:
+                        steps = validate_recipe(raw, self.patterns(), self.library, self.max_pixels)
+                    except PatternError as e:
+                        result = {"ok": False, "error": str(e)}
+                        yield Event("progress", f"ツール {name} の引数を受け付けませんでした：{e}")
+                    else:
+                        args = {"steps": steps}
+                        job = self.jobs.submit(name, self.rt.env.id, conf.id, args, self._run_recipe(steps))
+                        yield Event("progress", f"ジョブ {job.id}（{name}、{len(steps)} 手）を開始しました", {"job": job.id})
+                        async for ev in self._follow(job.id):
+                            yield ev
+                        done = self.jobs.get(job.id)
+                        result = {"ok": done.state == "done", "state": done.label, "artifacts": done.result,
+                                  "final": done.result[-1] if done.result else None, "error": done.error,
+                                  "output": done.message}
+                        if done.result:
+                            yield Event("artifacts", data={"refs": done.result})
                 elif name == "delegate_task" and depth == 0:
                     result = {"ok": False, "error": "引数が読めません"}
                     async for ev in self._delegate(_args(raw), attachments, max_tokens, tc, result):
@@ -754,11 +796,12 @@ class Orchestrator:
             negative = ", ".join(x for x in (args.get("negative_prompt", ""), style.negative if style else "") if x)
             seed = args.get("seed", random.randrange(2**32))
             count = int(args.get("count", 1))
+            knobs = self._knobs(key, args)
             refs: list[str] = []
             for i in range(count):
                 ctx.check_cancel()
                 values = {"prompt": prompt, "negative": negative, "seed": (seed + i) % 2**32,
-                          "width": width, "height": height}
+                          "width": width, "height": height, **knobs}
                 outs = await self._comfy_run(ctx, key, "workflow", values)
                 ctx.set_state("saving")
                 gen = {"tool": "generate_image", **values, "model": self.rt.conf.components[key].model}
@@ -770,6 +813,72 @@ class Orchestrator:
                     ctx.set_progress((i + 1) / count, f"{i + 1}/{count} 枚")
             return refs
         return run
+
+    def _run_recipe(self, steps: list[dict]):
+        """手順を 1 手ずつ実行する。前の手の出力（画像）を次の手の画像入力へ渡し、途中の画像も成果物に残す。"""
+        async def run(ctx: JobContext) -> list[str]:
+            by_id = {p.id: p for p in self.patterns()}
+            refs: list[str] = []
+            prev: str | None = None
+            for i, st in enumerate(steps, 1):
+                ctx.check_cancel()
+                p = by_id[st["pattern"]]
+                src = st.get("image_ref") or (prev if p.images else None)
+                values: dict[str, Any] = {}
+                for k in ("prompt", "negative_prompt"):
+                    if k in st:
+                        values["negative" if k == "negative_prompt" else k] = st[k]
+                if "aspect" in st or ("width" in p.bindings and not src):
+                    values["width"], values["height"] = ASPECTS.get(st.get("aspect", "1:1"))
+                if "seed" in p.bindings:
+                    values["seed"] = st.get("seed", random.randrange(2**32))
+                values.update({k: st[k] for k in p.params if k in st})
+                values = {k: v for k, v in values.items() if k in p.bindings}
+                if p.images:
+                    if not src:
+                        raise ToolError(f"{i} 手目（{p.id}）の画像入力がありません")
+                    values[p.images[0]] = self.library.path(self.library.get(src))
+                ctx.set_state("processing", f"{i}/{len(steps)} 手目：{p.label}")
+                workflow = json.loads(p.workflow_path.read_text(encoding="utf-8"))
+                async with self.rt.use([p.component], f"generate:{p.component}", work_gb=p.work_gb,
+                                       job_id=f"{ctx.job.id}-{i}") as (eng,):
+                    comfy = eng.comfy
+                    for k in p.images[:1]:
+                        values[k] = await comfy.upload_image(values[k])
+                    wf = apply_bindings(workflow, p.bindings, values)
+                    self.jobs.set_cancel_hook(ctx.job.id, comfy.interrupt)
+                    outs = await comfy.run(wf, self._tmp(), on_progress=lambda pr, m: ctx.set_progress(pr, m))
+                gen = {"tool": "run_recipe", "pattern": p.id, "step": i, "of": len(steps),
+                       "model": self.rt.conf.components[p.component].model,
+                       **{k: (str(v) if isinstance(v, Path) else v) for k, v in values.items() if k not in p.images}}
+                saved = [self.library.add_file(o, env_id=self.rt.env.id, configuration=self.rt.conf.id,
+                                               title=f"{p.label}（{i}/{len(steps)}）", sources=[src] if src else [],
+                                               generation=gen).ref for o in outs]
+                if not saved:
+                    raise ToolError(f"{i} 手目（{p.id}）が何も出力しませんでした")
+                refs += saved
+                prev = saved[-1]
+                ctx.set_progress(i / len(steps), f"{i}/{len(steps)} 手")
+            ctx.job.message = f"最後の出力：{prev}（途中の出力も残しています）"
+            return refs
+        return run
+
+    def _knobs(self, key: str, args: dict) -> dict:
+        """generate_image の細かい設定（steps・cfg・lora）。ワークフローに差し込み先があるものだけ使える。"""
+        comp = self.rt.conf.components[key]
+        bindings = comp.raw.get("bindings", {})
+        knobs = {k: args[k] for k in ("steps", "cfg") if k in args}
+        if "lora" in args:
+            allowed = list(comp.raw.get("loras", []))
+            if args["lora"] not in allowed:
+                raise ToolError(f"lora '{args['lora']}' は使えません（使えるもの：{', '.join(allowed) or 'なし'}）")
+            knobs["lora"] = args["lora"]
+            knobs["lora_strength"] = args.get("lora_strength", 1.0)
+        missing = [k for k in knobs if not bindings.get(k)]
+        if missing:
+            raise ToolError(f"このモデルのワークフローでは {', '.join(missing)} を変えられません"
+                            "（catalog の bindings に差し込み先がありません）")
+        return knobs
 
     def _edit_image(self, args: dict):
         async def run(ctx: JobContext) -> list[str]:
@@ -856,6 +965,9 @@ class Orchestrator:
                 ctx.job.message = "。".join(notes)
             return refs
         return run
+
+
+REF_IN_TEXT = re.compile(r"[0-9a-f]{12}@[1-9][0-9]{0,5}")
 
 
 def video_frames(seconds: float, fps: int) -> int:

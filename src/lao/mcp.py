@@ -70,6 +70,19 @@ TOOL_DEFS = [
     _from_lao("generate_speech", "文章を読み上げた音声を作る（E3）。"),
     _from_lao("describe_media",
               "画像・音声・動画をこの PC の AI に見せ、問いへの答えを文章で返す。仕上がりの確認に使う。"),
+    {"name": "patterns", "description": "run_recipe で使えるパターン（生成モデルごとに用意した ComfyUI の処理：拡大、顔と手の補正、"
+                                       "参考画像のポーズで描く など）の一覧と、それぞれの値。",
+     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"name": "run_recipe",
+     "description": "パターンを最大 6 手まで順に使う（E2）。前の手の出力が次の手の画像入力になり、途中の画像も残る。"
+                    "使えるパターンと値は patterns で確かめる。1 回で済むなら generate_image・edit_image を使う。",
+     "inputSchema": {"type": "object", "properties": {
+         "steps": {"type": "array", "maxItems": 6, "items": {"type": "object", "properties": {
+             "pattern": {"type": "string"}, "prompt": {"type": "string"}, "negative_prompt": {"type": "string"},
+             "aspect": {"type": "string"}, "image_ref": {"type": "string", "description": "この手の画像入力（id@版）"},
+             "seed": {"type": "integer"}}, "required": ["pattern"],
+             "additionalProperties": True}, "description": "手順。パターン固有の値（steps・denoise など）も各手に書ける"},
+         "wait_seconds": _WAIT}, "required": ["steps"], "additionalProperties": False}},
     {"name": "job", "description": "ジョブの状態を返す。wait_seconds まで終わるのを待つ。cancel で取り消す。",
      "inputSchema": {"type": "object", "properties": {
          "job_id": {"type": "string"}, "wait_seconds": _WAIT,
@@ -159,9 +172,9 @@ TOOL_DEFS = [
          "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
          "additionalProperties": False}},
 ]
-GENERATORS = {"generate_image", "edit_image", "generate_video", "generate_speech", "describe_media"}
+GENERATORS = {"generate_image", "edit_image", "generate_video", "generate_speech", "describe_media", "run_recipe"}
 # 道具が今の環境に無いときに切り替える先
-HOME_ENV = {"generate_image": "e2", "edit_image": "e2", "generate_video": "e4", "generate_speech": "e3",
+HOME_ENV = {"generate_image": "e2", "edit_image": "e2", "run_recipe": "e2", "generate_video": "e4", "generate_speech": "e3",
             "describe_media": "e1"}
 TERMINAL_STATES = ("done", "cancelled", "failed", "interrupted")
 
@@ -387,6 +400,19 @@ class Bridge:
     def t_combine(self, args: dict) -> str:
         a = self._req("POST", "/api/combine", json=args, timeout=1800).json()
         return f"できました：{a['ref']} video {a['path']} seconds={a['seconds']} has_audio={a['has_audio']}"
+
+    def t_patterns(self, _args: dict) -> str:
+        self._ensure_env("run_recipe")
+        items = self._req("GET", "/api/patterns").json()["patterns"]
+        if not items:
+            return "使えるパターンはありません（Spark で lao pattern new／approve で用意します）"
+        out = []
+        for p in items:
+            params = "、".join(f"{k}（{v.get('minimum', '')}〜{v.get('maximum', '')}）" if v["type"] != "string" else k
+                              for k, v in p["params"].items())
+            out.append(f"- {p['id']}：{p['does']}（要るもの：{p['needs']}。出力：{p['output']}）"
+                       + (f" 値：{params}" if params else "") + (f" 使わない：{p['avoid']}" if p["avoid"] else ""))
+        return "\n".join(out)
 
     def t_styles(self, _args: dict) -> str:
         items = self._req("GET", "/api/image-styles").json()["styles"]

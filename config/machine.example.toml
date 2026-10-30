@@ -78,6 +78,8 @@ command = ["C:/lao/engines/comfyui/.venv/Scripts/python.exe", "main.py", "--list
            "--temp-directory", "D:/lao/comfyui"]
 cwd = "C:/lao/engines/comfyui"
 url = "http://127.0.0.1:8730"
+# パターン（手順）で一度に作れる画像の大きさの上限（画素数）  # P0
+max_pixels = 4194304
 
 [engines.ffmpeg]
 binary = "C:/lao/engines/ffmpeg/bin/ffmpeg.exe"

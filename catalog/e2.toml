@@ -39,4 +39,9 @@ mem = { weights_gb = 40, overhead_gb = 8 }
 capabilities = ["image_generate", "image_edit"]
 workflow = "workflows/e2-generate.json"
 edit_workflow = "workflows/e2-edit.json"
-bindings = { prompt = "", negative = "", seed = "", width = "", height = "", image = "" }   # TODO(P0): ComfyUI から書き出した JSON のノード番号.入力名
+# TODO(P0): ComfyUI から書き出した JSON のノード番号.入力名（steps 以降は空なら generate_image で変えられないだけ）
+bindings = { prompt = "", negative = "", seed = "", width = "", height = "", image = "", steps = "", cfg = "", lora = "", lora_strength = "" }
+# generate_image の lora に指定してよい追加モデルのファイル名（ComfyUI の models/loras に置いたもの）
+loras = []
+# 会話モデルが組み合わせて使うパターン（lao pattern new／approve で用意する。docs/patterns.md）
+patterns = "patterns/e2-qwen-image"

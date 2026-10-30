@@ -19,6 +19,7 @@ _TARGETS = {
     "prompt": "1.inputs.text", "negative": "1.inputs.negative", "seed": "2.inputs.seed",
     "width": "2.inputs.width", "height": "2.inputs.height", "image": "3.inputs.image",
     "seconds": "2.inputs.seconds", "fps": "2.inputs.fps", "frames": "2.inputs.frames",
+    "steps": "2.inputs.steps", "cfg": "2.inputs.cfg", "lora": "1.inputs.lora", "lora_strength": "1.inputs.lora_strength",
 }
 
 

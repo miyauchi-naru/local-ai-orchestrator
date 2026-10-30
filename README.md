@@ -35,6 +35,7 @@ RTX Spark（128GB 統合メモリ、Windows 11 on Arm）1台で、四つの目�
 5. **カタログの TODO を埋める**（`grep -rn "TODO(P0)" catalog config scripts`）
    - モデルの配布元・ファイル・ライセンスを確認し、`status = "verified"` にします。
    - ComfyUI で画像・動画のワークフローを作り、「API 形式で書き出し」て `catalog/workflows/` に置き、`bindings` を埋めます（[docs/comfyui-workflows.md](docs/comfyui-workflows.md)）。
+   - 会話モデルが組み合わせて使うパターン（拡大、顔と手の補正 など）を `lao pattern new` → `lao pattern approve` で用意します（[docs/patterns.md](docs/patterns.md)）。
    - TTS エンジンを選び、[docs/tts-contract.md](docs/tts-contract.md) の形の中継を用意します。
 6. **モデル取得**：`lao plan e1`（確認のみ）→ `lao install e1 --execute`
 7. **起動**：`lao serve --env e1` → 表示された URL を開きます。
@@ -134,4 +135,5 @@ src/lao/
   backends/       llama-server、ComfyUI、TTS、ダミー
   p0/probe.py     実機の測定と設定値の提案
   p0/pairs.py     会話モデル＋生成モデルの組み合わせ評価（再現度・引数・見て直す力・修正・メモリ）
+  patterns.py     会話モデルが組み合わせて使う ComfyUI のパターン（検証・承認・候補の絞り込み・手順の検証）
 ```

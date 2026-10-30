@@ -234,10 +234,16 @@ async def _turn(orch: Orchestrator, jobs: JobManager, messages: list[dict]) -> d
     return {"text": text.strip()[:2000], "invalid": invalid, "errors": errors, "calls": calls}
 
 
-def _last(turn: dict, tools: tuple[str, ...]) -> str:
+IMAGE_TOOLS = ("generate_image", "edit_image", "run_recipe")
+
+
+def _last(turn: dict, tools: tuple[str, ...], lib: Library | None = None, kind: str = "image") -> str:
+    """最後にできた成果物（run_recipe は最後の手の出力）。lib を渡すと kind の成果物だけを見る。"""
     for call in reversed(turn["calls"]):
         if call["tool"] in tools and call["ok"] and call["refs"]:
-            return call["refs"][-1]
+            ref = call["refs"][-1]
+            if lib is None or lib.get(ref).kind == kind:
+                return ref
     return ""
 
 
@@ -254,11 +260,11 @@ async def run_task(orch: Orchestrator, jobs: JobManager, lib: Library, task: Tas
     msgs = [{"role": "user", "content": task.request}]
     first = await _turn(orch, jobs, msgs)
     rec["turns"].append(first)
-    ref = _last(first, ("generate_image", "edit_image"))
+    ref = _last(first, IMAGE_TOOLS, lib)
     if ref:
         rec["images"].append(ref)
     if task.kind == "video":
-        rec["video"] = _last(first, ("generate_video",))
+        rec["video"] = _last(first, ("generate_video", "run_recipe"), lib, "video")
     elif ref and task.kind == "image" and can_see:
         for _ in range(suite.fix_rounds):
             path = lib.path(lib.get(ref))
@@ -267,7 +273,7 @@ async def run_task(orch: Orchestrator, jobs: JobManager, lib: Library, task: Tas
                                                        image_part(path)]}]
             t = await _turn(orch, jobs, fix)
             rec["turns"].append(t)
-            new = _last(t, ("generate_image", "edit_image"))
+            new = _last(t, IMAGE_TOOLS, lib)
             if not new:
                 rec["said_done"].append(len(rec["images"]) - 1)
                 break
@@ -277,7 +283,7 @@ async def run_task(orch: Orchestrator, jobs: JobManager, lib: Library, task: Tas
         t = await _turn(orch, jobs, msgs + [{"role": "assistant", "content": _summary(first, ref)},
                                             {"role": "user", "content": task.followup}])
         rec["turns"].append(t)
-        rec["edited"] = _last(t, ("generate_image", "edit_image"))
+        rec["edited"] = _last(t, IMAGE_TOOLS, lib)
     rec["seconds"] = round(time.monotonic() - t0, 1)
     return rec
 
@@ -293,8 +299,9 @@ async def run_pair(machine: MachineConfig, catalog_dir: Path, catalog: dict[str,
     orch = Orchestrator(rt, lib, jobs, Media(ff.get("binary", "ffmpeg"), ff.get("ffprobe", "ffprobe")),
                         work / "tmp", catalog_dir)
     can_see = "image" in conf.chat.capabilities
+    patterns = sorted(p.id for p in orch.patterns() if p.usable)
     est = sum(c.resident_gb for c in conf.components.values()) * machine.safety_factor
-    res: dict[str, Any] = {"pair": dataclasses.asdict(pair), "id": pair.id, "can_see": can_see,
+    res: dict[str, Any] = {"pair": dataclasses.asdict(pair), "id": pair.id, "can_see": can_see, "patterns": patterns,
                            "models": {k: c.model for k, c in conf.components.items()},
                            "estimate_gb": round(est, 1), "records": []}
     t0 = time.monotonic()
@@ -410,8 +417,14 @@ def _ratio(ans: list | None) -> float | None:
     return None if ans is None or not ans else sum(1 for a in ans if a is True) / len(ans)
 
 
-def _args_checks(rec: dict, task: Task) -> list[bool]:
-    """引数の選び方の確認：壊れた呼び出しが無い、画像ができた、縦横比、避けたい内容、修正の道具、動画の元画像。"""
+def _used_pattern(rec: dict, pattern: str) -> bool:
+    return any(c["tool"] == "run_recipe" and c["ok"] and any(s.get("pattern") == pattern for s in c["args"]["steps"])
+               for t in rec["turns"] for c in t["calls"])
+
+
+def _args_checks(rec: dict, task: Task, patterns: list[str] | None = None) -> list[bool]:
+    """引数の選び方の確認：壊れた呼び出しが無い、画像ができた、縦横比、避けたい内容、修正の道具、
+    動画の元画像、正しいパターンを選んだか（その組み合わせにパターンがあるときだけ）。"""
     first = rec["turns"][0]
     out = [first["invalid"] == 0 and not first["errors"], bool(rec["images"])]
     gen = next((c for c in first["calls"] if c["tool"] == "generate_image"), None)
@@ -427,9 +440,13 @@ def _args_checks(rec: dict, task: Task) -> list[bool]:
         out.append(bool(gen and str(gen["args"].get("negative_prompt", "")).strip()))
     if "count" in task.expect:
         out.append(bool(gen and int(gen["args"].get("count", 1)) == int(task.expect["count"])))
+    want_pattern = task.expect.get("pattern")
+    if want_pattern and want_pattern in (patterns or []):
+        out.append(_used_pattern(rec, want_pattern))
     if task.kind == "edit" and len(rec["turns"]) > 1:
         follow = rec["turns"][1]
-        out.append(any(c["tool"] == "edit_image" and c["ok"] for c in follow["calls"]))
+        if not want_pattern:
+            out.append(any(c["tool"] == "edit_image" and c["ok"] for c in follow["calls"]))
         out.append(follow["invalid"] == 0 and not follow["errors"])
     if task.kind == "video":
         vid = next((c for c in first["calls"] if c["tool"] == "generate_video"), None)
@@ -444,7 +461,7 @@ def score_pair(res: dict, tasks: dict[str, Task], answers: dict[str, list], weig
     for rec in res["records"]:
         task = tasks[rec["task"]]
         base = f"{res['id']}|{rec['task']}|{rec['repeat']}|"
-        a = _args_checks(rec, task)
+        a = _args_checks(rec, task, res.get("patterns"))
         args.append(sum(a) / len(a))
         n = len(task.checks)
         r0: float | None = _ratio(answers.get(base + "r0")) if rec["images"] else 0.0
