@@ -30,7 +30,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from .documents import DOC_SUFFIXES, DocumentError, extract_text
 from .jobs import TERMINAL
+from .image_styles import StyleError
 from .library import Artifact
+from .lock import DELEGATE, PRIORITY
+from . import maintenance
 from .orchestrator import TurnContext
 from .service import Service
 from .tools import ToolError, tools_for, validate
@@ -41,6 +44,8 @@ DATA_URI_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp
 MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_WAIT_SECONDS = 600
+MAX_INBOX_FILES = 200
+MAX_DELEGATE_PIECES = 24  # 区切って読むときの上限（これより長い素材は分けて頼んでもらう）
 DELEGATE_SYSTEM = ("あなたは、別の PC で動く AI（Claude）から作業を任された下請けです。頼まれたことだけを、"
                    "前置きや感想なしで、必要な分だけ短く返してください。素材にないことは作らず、分からなければそう書いてください。"
                    "日本語で頼まれたら日本語で答えてください。")
@@ -118,11 +123,18 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
     @app.post("/api/environment", dependencies=[Depends(auth)])
     async def select(body: dict):
         try:
-            rt = await service.select(body["env"], body.get("configuration"))
+            if service.runtime and body.get("env") == service.runtime.env.id and \
+                    body.get("configuration") in (None, service.runtime.conf.id):
+                rt = service.runtime  # 同じ環境なら選び直さない（読み込み済みのモデルを残す）
+            else:
+                rt = await service.select(body["env"], body.get("configuration"))
         except KeyError as e:
             raise HTTPException(404, str(e)) from e
         except RuntimeError as e:
             raise HTTPException(409, str(e)) from e
+        if body.get("preload"):
+            async with rt.lock.hold("preload"):
+                await rt.preload()
         return rt.status()
 
     @app.get("/api/status", dependencies=[Depends(auth)])
@@ -784,7 +796,9 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         rt = service.runtime
         try:
             args = validate(name, body, rt.conf, service.library)
-        except ToolError as e:
+            if args.get("style"):
+                service.styles.get(args["style"])
+        except (ToolError, StyleError) as e:
             raise HTTPException(400, str(e)) from e
         j = service.jobs.submit(name, rt.env.id, rt.conf.id, args, orch._runner(name, args))
         return job_json(j)
@@ -806,51 +820,203 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
                 raise HTTPException(400, str(e)) from e
             return Response(out.read_bytes(), media_type="image/jpeg")
 
+    @app.get("/api/sheet", dependencies=[Depends(auth)])
+    def sheet(refs: str, size: int = 256):
+        """複数の画像を縮小して並べた 1 枚（まとめて作った案を一度に見比べるため）。"""
+        names = [r for r in refs.split(",") if r][:16]
+        try:
+            arts = [service.library.get(r) for r in names]
+        except (KeyError, ValueError) as e:
+            raise HTTPException(404, str(e)) from e
+        if not arts or any(a.kind != "image" for a in arts):
+            raise HTTPException(400, "並べられるのは画像だけです")
+        with tempfile.TemporaryDirectory() as d:
+            try:
+                out = service.media.contact_sheet([service.library.path(a) for a in arts], Path(d) / "sheet.jpg",
+                                                  max(64, min(size, 512)))
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            return Response(out.read_bytes(), media_type="image/jpeg")
+
     @app.post("/api/delegate", dependencies=[Depends(auth)])
     async def delegate(body: dict):
-        """この PC の AI に下請けを頼む（要約・下書き・翻訳・プロンプト作り）。結果の文章だけを返す。"""
+        """この PC の AI に下請けを頼む（要約・下書き・翻訳・プロンプト作り）。結果の文章だけを返す。
+
+        素材は text・成果物（refs）・受け取り箱のファイルやフォルダ（inbox）で渡す。受け取り箱の分は成果物に
+        取り込んでから読むので、頼む側（Claude）は中身を読まずに済む。長すぎる素材は区切って要点を抜き出し、
+        まとめてから答える。
+        """
         orch = runtime_or_409()
+        PRIORITY.set(DELEGATE)  # 生成の次に優先する（lock.py）
         task = str(body.get("task") or "").strip()
         if not task:
             raise HTTPException(400, "task（頼むこと）を書いてください")
-        parts = [task]
+        materials: list[tuple[str, str]] = []
         if body.get("text"):
-            parts.append("--- 素材 ---\n" + str(body["text"]))
-        for ref in body.get("refs") or []:
+            materials.append(("素材", str(body["text"])))
+        refs = [str(r) for r in body.get("refs") or []]
+        for name in body.get("inbox") or []:
+            refs += [a.ref for a in import_inbox(str(name))]
+        for ref in refs:
             try:
-                a = service.library.get(str(ref))
+                a = service.library.get(ref)
                 p = service.library.path(a)
                 text = extract_text(p) if p.suffix.lower() in DOC_SUFFIXES else p.read_text(encoding="utf-8")
             except (KeyError, ValueError, DocumentError, UnicodeDecodeError) as e:
                 raise HTTPException(400, f"{ref} を文章として読めません：{e}") from e
-            parts.append(f"--- 資料 {a.title}（{a.ref}） ---\n{text}")
-        content = "\n\n".join(parts)
+            materials.append((f"資料 {a.title}（{a.ref}）", text))
         max_tokens = max(64, min(int(body.get("max_tokens") or 1024), 8192))
         # 日本語はおおむね 1 文字 1 トークン以上なので、文字数で控えめに見積もる
         room = orch.context_limit - max_tokens - 1024
-        if len(content) > room:
-            raise HTTPException(413, f"素材が長すぎます（{len(content)} 文字、上限の目安 {room} 文字）。分けて頼んでください")
+        total = sum(len(t) for _, t in materials)
+        if total > room * MAX_DELEGATE_PIECES:
+            raise HTTPException(413, f"素材が長すぎます（{total} 文字、上限の目安 {room * MAX_DELEGATE_PIECES} 文字）。"
+                                     "分けて頼んでください")
         try:
-            text = await orch.complete([{"role": "user", "content": content}], max_tokens, system=DELEGATE_SYSTEM)
+            text, pieces = await delegate_text(orch, task, materials, max_tokens, room)
         except Exception as e:  # noqa: BLE001 — 呼んだ側に理由を返す
             raise HTTPException(503, f"AI に頼めませんでした：{e}") from e
-        return {"text": text, "model": service.runtime.conf.chat_component}
+        out = {"text": text, "model": service.runtime.conf.chat_component, "pieces": pieces}
+        if refs:
+            out["refs"] = refs
+        return out
+
+    def import_inbox(name: str) -> list[Artifact]:
+        """受け取り箱のファイル（またはフォルダの中のファイル全部）を成果物に取り込む。取り込んだものは箱から消す。"""
+        inbox = (service.root / "inbox").resolve()
+        src = (inbox / name).resolve()
+        if not name or inbox not in src.parents or not src.exists():
+            raise HTTPException(404, f"受け取り箱 {inbox} に {name or '（名前なし）'} がありません")
+        files = [src] if src.is_file() else sorted(
+            f for f in src.rglob("*") if f.is_file() and not any(x.startswith(".") for x in f.relative_to(src).parts))
+        if len(files) > MAX_INBOX_FILES:
+            raise HTTPException(413, f"ファイルが多すぎます（{len(files)} 個、上限 {MAX_INBOX_FILES}）。分けて送ってください")
+        env = service.runtime.env.id if service.runtime else "upload"
+        out, skipped = [], []
+        for f in files:
+            with tempfile.TemporaryDirectory() as d:
+                tmp = Path(d) / f"import{f.suffix.lower()}"
+                shutil.copyfile(f, tmp)
+                title = f.relative_to(src.parent).as_posix()
+                try:
+                    out.append(ingest(tmp, title, env))
+                except HTTPException:
+                    if src.is_file():
+                        raise
+                    skipped.append(title)
+                    continue
+            f.unlink()
+        if src.is_dir():
+            shutil.rmtree(src, ignore_errors=True)
+        if not out:
+            raise HTTPException(400, f"{name} に取り込めるファイルがありません（画像・音声・動画・文書・PDF・テキスト）")
+        return out
 
     @app.post("/api/import", dependencies=[Depends(auth)])
     def import_file(body: dict):
-        """受け取り箱（root/inbox）に置かれたファイルを成果物に取り込む。scp で送ったものを使うため。"""
-        name = str(body.get("name") or "")
-        inbox = (service.root / "inbox").resolve()
-        src = (inbox / name).resolve()
-        if not name or src.parent != inbox or not src.is_file():
-            raise HTTPException(404, f"受け取り箱 {inbox} に {name or '（名前なし）'} がありません")
+        """受け取り箱（root/inbox）に置かれたファイルかフォルダを成果物に取り込む。scp で送ったものを使うため。"""
+        arts = import_inbox(str(body.get("name") or ""))
+        if len(arts) == 1 and (service.root / "inbox" / str(body.get("name"))).suffix:
+            return art_json(arts[0])
+        return {**art_json(arts[0]), "items": [art_json(a) for a in arts]}
+
+    @app.get("/api/inbox", dependencies=[Depends(auth)])
+    def inbox():
+        box = service.root / "inbox"
+        items = []
+        if box.is_dir():
+            for p in sorted(box.iterdir()):
+                if not p.name.startswith("."):
+                    items.append({"name": p.name, "folder": p.is_dir(), "bytes": maintenance._size(p)})
+        return {"path": str(box), "items": items}
+
+    # ------------------------------------------------------------ 画像のスタイル
+    @app.get("/api/image-styles", dependencies=[Depends(auth)])
+    def image_styles():
+        from .image_styles import ASPECTS
+        return {"styles": [st.__dict__ for st in service.styles.list()], "aspects": list(ASPECTS)}
+
+    @app.post("/api/image-styles", dependencies=[Depends(auth)])
+    def save_image_style(body: dict):
+        try:
+            st = service.styles.save(str(body.get("name", "")), str(body.get("prompt", "")),
+                                     str(body.get("negative", "")), str(body.get("aspect", "")),
+                                     str(body.get("note", "")))
+        except StyleError as e:
+            raise HTTPException(400, str(e)) from e
+        return st.__dict__
+
+    @app.delete("/api/image-styles/{name}", dependencies=[Depends(auth)])
+    def delete_image_style(name: str):
+        try:
+            service.styles.delete(name)
+        except StyleError as e:
+            raise HTTPException(404, str(e)) from e
+        return {"ok": True}
+
+    # ------------------------------------------------------------ 手入れ
+    @app.get("/api/health", dependencies=[Depends(auth)])
+    def health():
+        h = maintenance.health(service)
+        return {**h.__dict__, "summary": h.summary(), "idle_unload_minutes": service.idle_unload_seconds() / 60}
+
+    @app.post("/api/cleanup", dependencies=[Depends(auth)])
+    def cleanup(body: dict):
+        days = max(1, min(int(body.get("days") or 30), 3650))
+        return maintenance.cleanup(service, execute=bool(body.get("execute")), days=days)
+
+    @app.post("/api/backup", dependencies=[Depends(auth)])
+    def make_backup():
+        p = maintenance.backup(service.root)
+        return {"path": str(p), "bytes": p.stat().st_size}
+
+    @app.post("/api/unload", dependencies=[Depends(auth)])
+    async def unload():
+        """読み込んだモデルを今すぐ下ろす（ジョブの実行中はしない）。"""
+        if not service.runtime:
+            return {"unloaded": []}
+        if service.busy():
+            raise HTTPException(409, "実行中のジョブがあります")
+        keys = service.runtime.loaded()
+        async with service.runtime.lock.hold("unload"):
+            await service.runtime.unload_all()
+        return {"unloaded": keys}
+
+    @app.post("/api/combine", dependencies=[Depends(auth)])
+    def combine(body: dict):
+        """動画に音声を重ねる、または動画をつなぐ（ffmpeg だけで行い、GPU は使わない）。"""
+        try:
+            arts = [service.library.get(str(r)) for r in body.get("refs") or []]
+        except (KeyError, ValueError) as e:
+            raise HTTPException(404, str(e)) from e
+        videos = [a for a in arts if a.kind == "video"]
+        audios = [a for a in arts if a.kind == "audio"]
+        if not videos or len(audios) > 1 or len(videos) + len(audios) != len(arts):
+            raise HTTPException(400, "refs には動画を 1 本以上と、重ねる音声を 0〜1 本指定してください")
         env = service.runtime.env.id if service.runtime else "upload"
         with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d) / f"import{src.suffix.lower()}"
-            shutil.copyfile(src, tmp)
-            art = ingest(tmp, src.name, env)
-        src.unlink()
-        return art_json(art)
+            out = Path(d) / "clip.mp4"
+            src = [service.library.path(a) for a in videos]
+            try:
+                if len(src) > 1:
+                    service.media.concat_videos(src, Path(d) / "joined.mp4")
+                    base = Path(d) / "joined.mp4"
+                else:
+                    base = src[0]
+                if audios:
+                    service.media.mux_audio(base, service.library.path(audios[0]), out,
+                                            mix=bool(body.get("mix")))
+                else:
+                    shutil.copyfile(base, out)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            title = str(body.get("title") or videos[0].title)[:60]
+            art = service.library.add_file(out, env_id=env, configuration="combine", title=title,
+                                           sources=[a.ref for a in arts], move=True,
+                                           generation={"tool": "combine", "mix": bool(body.get("mix"))})
+        info = service.media.probe(service.library.path(art))
+        return {**art_json(art), "path": str(service.library.path(art)), "seconds": round(info.duration, 2),
+                "has_audio": info.has_audio}
 
     # ------------------------------------------------------------ OpenAI 互換
     @app.get("/v1/models", dependencies=[Depends(auth)])
@@ -908,6 +1074,42 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         return StreamingResponse(sse(), media_type="text/event-stream")
 
     return app
+
+
+async def delegate_text(orch, task: str, materials: list[tuple[str, str]], max_tokens: int,
+                        room: int) -> tuple[str, int]:
+    """素材が文脈に収まれば一度に、収まらなければ区切って要点を抜き出してから答える。返り値は（答え、区切りの数）。"""
+    def joined(items: list[tuple[str, str]]) -> str:
+        return "\n\n".join([task] + [f"--- {h} ---\n{t}" for h, t in items])
+
+    if room < 2000:
+        raise ValueError(f"文脈が短すぎます（{room} 文字）")
+    content = joined(materials)
+    if len(content) <= room:
+        return await orch.complete([{"role": "user", "content": content}], max_tokens, system=DELEGATE_SYSTEM), 1
+    size = room - len(task) - 400
+    notes: list[tuple[str, str]] = []
+    pieces = 0
+    for head, text in materials:
+        parts = [text[i:i + size] for i in range(0, len(text), size)] or [""]
+        for n, part in enumerate(parts, 1):
+            pieces += 1
+            ask = (f"次の頼みごとのために、下の資料（{head} の {n}/{len(parts)}）から必要なことだけを箇条書きで抜き出してください。"
+                   f"資料にないことは書かないでください。\n頼みごと：{task}\n\n--- 資料 ---\n{part}")
+            note = await orch.complete([{"role": "user", "content": ask}], min(1024, max_tokens),
+                                       system=DELEGATE_SYSTEM)
+            notes.append((f"{head} の {n}/{len(parts)} の要点", note))
+    while len(joined(notes)) > room and len(notes) > 1:
+        # 要点もまだ長いときは、二つずつまとめる
+        merged = []
+        for i in range(0, len(notes), 2):
+            pair = notes[i:i + 2]
+            ask = f"次の要点を、頼みごと「{task}」に必要な分だけ残して一つにまとめてください。\n\n" + joined(pair)[len(task):]
+            merged.append((pair[0][0], await orch.complete([{"role": "user", "content": ask}], min(1024, max_tokens),
+                                                            system=DELEGATE_SYSTEM)))
+        notes = merged
+    answer = await orch.complete([{"role": "user", "content": joined(notes)}], max_tokens, system=DELEGATE_SYSTEM)
+    return answer, pieces
 
 
 def ingest_messages(service: Service, messages: list[dict]) -> tuple[list[dict], list[str]]:

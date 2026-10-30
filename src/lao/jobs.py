@@ -162,5 +162,13 @@ class JobManager:
     def get(self, job_id: str) -> Job:
         return self.jobs[job_id]
 
+    def forget(self, job_id: str) -> None:
+        """終わったジョブの記録を消す（成果物は消さない）。"""
+        job = self.jobs.get(job_id)
+        if job is None or job.state not in TERMINAL:
+            return
+        del self.jobs[job_id]
+        (self.root / f"{job_id}.json").unlink(missing_ok=True)
+
     def list(self) -> list[Job]:
         return sorted(self.jobs.values(), key=lambda j: j.created_at, reverse=True)

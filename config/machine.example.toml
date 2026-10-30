@@ -25,6 +25,8 @@ gpu_allocatable_gb = 0
 safety_factor = 1.15
 # 実行直前に OS 全体で最低限空いていてほしい量
 min_free_system_gb = 8
+# この分数だけ使われなければ、読み込んだモデルを下ろす（次の依頼で読み直す）。0 なら下ろさない
+idle_unload_minutes = 30
 
 [policy]
 # 配布元が公式に出している量子化形式（例：gpt-oss の MXFP4）は候補にしてよい
@@ -33,6 +35,16 @@ allow_publisher_quantized = true
 allow_third_party_quantized = false
 # 生成物の外部送信は常に不可（変更不可）
 allow_network_egress = false
+
+[backup]
+# 会話・記憶・設定・スキル・スタイルを 1 日 1 回 root/backups に zip で残す（メイン PC が取りに来る）
+daily = true
+keep = 14
+
+[health]
+# この値を超えたら status・health で知らせる
+disk_warn_pct = 90
+gpu_temp_warn_c = 85
 
 [server]
 host = "127.0.0.1"

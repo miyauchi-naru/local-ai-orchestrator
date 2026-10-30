@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,7 @@ class Runtime:
         self._factory = engine_factory
         self._engines: dict[str, Engine] = {}
         self._loading = asyncio.Lock()
+        self.last_used = time.monotonic()
 
     def resident_estimate(self, c: Component) -> float:
         m = self.machine.measured(self.env.id, c.key)
@@ -94,12 +96,14 @@ class Runtime:
         ロード確認と実行を同じロックの中で行う。
         """
         async with self.lock.hold(holder):
+            self.last_used = time.monotonic()
             await self.ensure(keys, work_gb)
             if job_id and work_gb:
                 self.governor.reserve(job_id, work_gb)
             try:
                 yield [self.engine(k) for k in keys]
             finally:
+                self.last_used = time.monotonic()
                 if job_id and work_gb:
                     self.governor.release(job_id)
 
@@ -113,13 +117,45 @@ class Runtime:
         for k in list(self._engines):
             await self.unload(k)
 
+    def loaded(self) -> list[str]:
+        return [k for k, e in self._engines.items() if e.running]
+
+    async def unload_if_idle(self, idle_seconds: float, now: float | None = None) -> list[str]:
+        """idle_seconds 使われていなければ、読み込んだ部品をすべて下ろす（次に使うときに読み直す）。
+
+        蓋を閉じて置いたままの PC で、使わないモデルが熱と電気を使い続けないようにする。
+        推論ロックが空いているときだけ行う。
+        """
+        keys = self.loaded()
+        if not keys or idle_seconds <= 0 or self.lock.status().get("holder"):
+            return []
+        if (now if now is not None else time.monotonic()) - self.last_used < idle_seconds:
+            return []
+        async with self._loading:
+            for k in keys:
+                await self.unload(k)
+        return keys
+
+    async def preload(self) -> list[str]:
+        """構成の部品を、予算に入る分だけ先に読み込む（次の依頼の待ちを減らす）。対話の部品から順に。"""
+        order = [self.conf.chat_component] + [k for k in self.conf.components if k != self.conf.chat_component]
+        done = []
+        for k in order:
+            try:
+                await self.ensure([k])
+            except NotAdmitted:
+                continue
+            done.append(k)
+        self.last_used = time.monotonic()
+        return done
+
     def status(self) -> dict:
         return {
             "environment": {"id": self.env.id, "name": self.env.name},
             "configuration": {"id": self.conf.id, "label": self.conf.label, "status": self.conf.status},
             "limited": self.limited,
             "capabilities": sorted(self.conf.capabilities()),
-            "loaded": [k for k, e in self._engines.items() if e.running],
+            "loaded": self.loaded(),
             "memory": self.governor.snapshot(),
             "lock": self.lock.status(),
         }

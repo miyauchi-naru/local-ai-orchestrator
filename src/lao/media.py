@@ -118,10 +118,61 @@ class Media:
         self._run(args + ["-i", str(path), "-vn", "-ac", "1", "-ar", "16000", str(out)])
         return out
 
-    def concat_videos(self, parts: list[Path], out: Path) -> Path:
-        lst = out.with_suffix(".txt")
-        lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")
-        self._run(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(out)])
+    def concat_videos(self, parts: list[Path], out: Path, reencode: bool = False) -> Path:
+        """動画をつなぐ。形式が揃っていなければ（大きさ・音声の有無が違う等）作り直してつなぐ。"""
+        if not reencode:
+            lst = out.with_suffix(".txt")
+            lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")
+            try:
+                self._run(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(out)])
+                return out
+            except ValueError:
+                pass
+        infos = [self.probe(p) for p in parts]
+        w, h = (infos[0].width or 1280), (infos[0].height or 720)
+        args, chains = [], []
+        for p in parts:
+            args += ["-i", str(p)]
+        for i, info in enumerate(infos):
+            chains.append(f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+                          f"setsar=1,fps=24,format=yuv420p[v{i}]")
+            if info.has_audio:
+                chains.append(f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo[a{i}]")
+            else:
+                chains.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={info.duration:.3f}[a{i}]")
+        joined = "".join(f"[v{i}][a{i}]" for i in range(len(parts)))
+        chains.append(f"{joined}concat=n={len(parts)}:v=1:a=1[v][a]")
+        self._run(args + ["-filter_complex", ";".join(chains), "-map", "[v]", "-map", "[a]", "-c:v", "libx264",
+                          "-preset", "veryfast", "-c:a", "aac", str(out)])
+        return out
+
+    def mux_audio(self, video: Path, audio: Path, out: Path, mix: bool = False) -> Path:
+        """動画に音声を付ける。mix なら元の音と混ぜ、そうでなければ置き換える。長さは動画に合わせる。"""
+        info = self.probe(video)
+        if mix and info.has_audio:
+            fc = "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]"
+        else:
+            fc = f"[1:a]apad,atrim=duration={info.duration:.3f}[a]"
+        self._run(["-i", str(video), "-i", str(audio), "-filter_complex", fc, "-map", "0:v", "-map", "[a]",
+                   "-c:v", "copy", "-c:a", "aac", "-shortest", str(out)])
+        return out
+
+    def contact_sheet(self, images: list[Path], out: Path, size: int = 256) -> Path:
+        """画像を縮小して横に並べた 1 枚にする（4 枚を超えると 2 段以上）。"""
+        cols = min(4, len(images))
+        rows = -(-len(images) // cols)
+        args, chains = [], []
+        for i, p in enumerate(images):
+            args += ["-i", str(p)]
+            chains.append(f"[{i}:v]scale={size}:{size}:force_original_aspect_ratio=decrease,"
+                          f"pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=white[t{i}]")
+        layout = "|".join(f"{(i % cols) * size}_{(i // cols) * size}" for i in range(len(images)))
+        if len(images) == 1:
+            chains.append("[t0]copy[o]")
+        else:
+            chains.append("".join(f"[t{i}]" for i in range(len(images))) +
+                          f"xstack=inputs={len(images)}:layout={layout}:fill=white[o]")
+        self._run(args + ["-filter_complex", ";".join(chains), "-map", "[o]", "-frames:v", "1", "-q:v", "4", str(out)])
         return out
 
     def trim(self, path: Path, out: Path, start: float = 0.0, end: float | None = None) -> Path:

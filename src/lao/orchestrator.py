@@ -26,6 +26,7 @@ from .memory import kv_cache_gb
 from .runtime import NotAdmitted, Runtime
 from .documents import DocumentError, best_chunks, extract_text
 from .folders import FolderError, Folders
+from .image_styles import StyleError, StyleStore, image_size
 from .sandbox import Sandbox, SandboxError
 from .search import DocIndex
 from .tools import ToolError, tools_for, validate
@@ -274,6 +275,7 @@ class Orchestrator:
         self.rt, self.library, self.jobs, self.media = rt, library, jobs, media
         self.sandbox = sandbox
         self.index = index
+        self.styles: StyleStore | None = None  # 画像のスタイル（Service が渡す）
         self.work_dir, self.catalog_dir = work_dir, catalog_dir
         gpu = rt.machine.raw.get("gpu", {})
         self.video_segment_seconds = float(gpu.get("video_segment_seconds", 5))
@@ -743,14 +745,30 @@ class Orchestrator:
     def _generate_image(self, args: dict):
         async def run(ctx: JobContext) -> list[str]:
             key = self._component_key("image_gen", "image_generate")
+            try:
+                style = self.styles.get(args["style"]) if args.get("style") and self.styles else None
+            except StyleError as e:
+                raise ToolError(str(e)) from e
+            width, height = image_size(args, style)
+            prompt = style.apply(args["prompt"]) if style else args["prompt"]
+            negative = ", ".join(x for x in (args.get("negative_prompt", ""), style.negative if style else "") if x)
             seed = args.get("seed", random.randrange(2**32))
-            values = {"prompt": args["prompt"], "negative": args.get("negative_prompt", ""), "seed": seed,
-                      "width": args.get("width", 1024), "height": args.get("height", 1024)}
-            outs = await self._comfy_run(ctx, key, "workflow", values)
-            ctx.set_state("saving")
-            return [self.library.add_file(p, env_id=self.rt.env.id, configuration=self.rt.conf.id,
-                                          title=args["prompt"][:60], generation={"tool": "generate_image", **values,
-                                          "model": self.rt.conf.components[key].model}).ref for p in outs]
+            count = int(args.get("count", 1))
+            refs: list[str] = []
+            for i in range(count):
+                ctx.check_cancel()
+                values = {"prompt": prompt, "negative": negative, "seed": (seed + i) % 2**32,
+                          "width": width, "height": height}
+                outs = await self._comfy_run(ctx, key, "workflow", values)
+                ctx.set_state("saving")
+                gen = {"tool": "generate_image", **values, "model": self.rt.conf.components[key].model}
+                if style:
+                    gen["style"] = style.name
+                refs += [self.library.add_file(p, env_id=self.rt.env.id, configuration=self.rt.conf.id,
+                                               title=args["prompt"][:60], generation=gen).ref for p in outs]
+                if count > 1:
+                    ctx.set_progress((i + 1) / count, f"{i + 1}/{count} 枚")
+            return refs
         return run
 
     def _edit_image(self, args: dict):
