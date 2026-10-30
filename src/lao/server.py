@@ -33,6 +33,7 @@ from .jobs import TERMINAL
 from .image_styles import StyleError
 from .library import Artifact
 from .lock import DELEGATE, PRIORITY
+from .runtime import FREE_OTHERS
 from . import maintenance
 from .usage import est_tokens, summary_text
 from .orchestrator import TurnContext
@@ -46,6 +47,7 @@ MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".wav", ".mp3", ".m4a", ".fla
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_WAIT_SECONDS = 600
 MAX_INBOX_FILES = 200
+REMOTE_GENERATORS = {"generate_image", "edit_image", "generate_video", "generate_speech"}
 MAX_DELEGATE_PIECES = 24  # 区切って読むときの上限（これより長い素材は分けて頼んでもらう）
 DELEGATE_SYSTEM = ("あなたは、別の PC で動く AI（Claude）から作業を任された下請けです。頼まれたことだけを、"
                    "前置きや感想なしで、必要な分だけ短く返してください。素材にないことは作らず、分からなければそう書いてください。"
@@ -801,6 +803,9 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
                 service.styles.get(args["style"])
         except (ToolError, StyleError) as e:
             raise HTTPException(400, str(e)) from e
+        if name in REMOTE_GENERATORS and service.free_chat_for_remote_generation():
+            # 別の PC からの生成では会話モデルは要らない：生成の前に下ろす（ジョブはこの文脈を引き継ぐ）
+            FREE_OTHERS.set(True)
         j = service.jobs.submit(name, rt.env.id, rt.conf.id, args, orch._runner(name, args))
         return job_json(j)
 
@@ -877,7 +882,9 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
             text, pieces = await delegate_text(orch, task, materials, max_tokens, room)
         except Exception as e:  # noqa: BLE001 — 呼んだ側に理由を返す
             raise HTTPException(503, f"AI に頼めませんでした：{e}") from e
-        out = {"text": text, "model": service.runtime.conf.chat_component, "pieces": pieces,
+        rt = service.runtime
+        out = {"text": text, "model": rt.conf.components[rt.conf.chat_component].model,
+               "environment": rt.env.id, "pieces": pieces,
                "material_tokens": sum(est_tokens(t) for _, t in materials)}
         if refs:
             out["refs"] = refs

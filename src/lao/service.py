@@ -305,6 +305,9 @@ class Service:
     def idle_unload_seconds(self) -> float:
         return float(self.machine.raw.get("memory", {}).get("idle_unload_minutes", 30)) * 60
 
+    def free_chat_for_remote_generation(self) -> bool:
+        return bool(self.machine.raw.get("memory", {}).get("free_chat_for_remote_generation", True))
+
     async def unload_idle(self, now: float | None = None) -> list[str]:
         """しばらく使われていないモデルを下ろす。ジョブの実行中は下ろさない。"""
         if not self.runtime or self.busy():
