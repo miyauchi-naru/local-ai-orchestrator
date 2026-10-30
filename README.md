@@ -98,6 +98,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 - 重なったときの順番：Claude にできないこと（生成・理解）→ Claude のトークンを多く使う下請け（ask_local）→ それ以外
 - 熱・電気：使わないモデルは 30 分で下ろし、GPU が熱いときは生成の区切りで小休止します
+- トークンの記録：lao に任せた分の節約の見積もりと、メイン PC の Claude Code の実際の使用量を月ごとにまとめます（`/spark-usage`、画面のふりかえり、`lao usage`）
 - 画像：`count` でまとめて作って並べて比べ、絵柄は名前つきのスタイルで呼べます。動画には `make_clip` で読み上げを重ねられます
 
 ## Open WebUI などから使う
@@ -115,6 +116,7 @@ src/lao/
   memory.py       統合メモリの予算と受付判定
   lock.py         共通の推論ロック（優先度つき）
   maintenance.py  健康状態、片づけ、バックアップ
+  usage.py        Claude のトークンの記録（節約の見積もりと Claude Code の使用量）
   updater.py      lao update（git pull、再起動、失敗したら元に戻す）
   image_styles.py 画像のスタイル
   runtime.py      部品のロード・アンロード（予算内で、構成の中だけ）

@@ -1456,7 +1456,24 @@ async function renderRecap(month) {
     <h2>作った成果物</h2><div class="list">${kv(r.artifacts, (k) => KIND[k] || k)}</div>
     <h2>よく使ったコマンド</h2><div class="list">${kv(r.commands, (k) => "/" + k)}</div>
     <h2>よく話した会話</h2><div class="list">${r.top_conversations.map((c) => `<div class="item"><div class="main"><b>${esc(c.title)}</b><span class="d">${c.messages} 回</span></div><button class="btn" data-open="${c.id}">開く</button></div>`).join("")}</div>`
-    : '<p class="muted" style="margin-top:14px">この月の会話はまだありません。</p>'}`;
+    : '<p class="muted" style="margin-top:14px">この月の会話はまだありません。</p>'}
+    <div id="rcUsage"></div>`;
+  getJSON(`/api/usage?month=${month}`).then((u) => {
+    const days = Object.keys(u.per_day), k = (n) => n >= 10000 ? Math.round(n / 1000) + "k" : String(n);
+    const cc = u.claude_code || {};
+    $("rcUsage").innerHTML = `<h2>Claude のトークン</h2>
+      <p class="small muted">メイン PC の Claude Code が lao に任せた分の記録です。節約は「Spark が代わりに読んだ量 − Claude に返した量」の見積もりで、Claude Code の使用量はメイン PC の会話記録から毎日数えて送られてきます（キャッシュから読んだ分は料金に合わせて 1/10 で数えます）。</p>
+      <div class="stats">
+        <div class="stat"><b>${u.calls}</b><span>lao に任せた回数</span></div>
+        <div class="stat"><b>${u.cannot_calls}</b><span>Claude にできないこと（作業 ${Math.round(u.cannot_seconds / 60)} 分）</span></div>
+        <div class="stat"><b>${k(u.saved_tokens)}</b><span>節約できたトークン（見積もり）</span></div>
+        <div class="stat"><b>${cc.days ? k(cc.total_tokens) : "—"}</b><span>Claude Code が使った量${cc.days ? `（${cc.days} 日分）` : "（まだ届いていません）"}</span></div>
+        <div class="stat"><b>${u.saved_share == null ? "—" : Math.round(u.saved_share * 100) + "%"}</b><span>lao が無い場合に対する節約の割合</span></div>
+      </div>
+      ${days.length ? `<h3>日ごとの節約（見積もり）</h3>${bars(days.map((d) => u.per_day[d].saved_tokens || 0), days.map((d) => d.slice(8)))}
+      <h3>日ごとの Claude Code の使用量</h3>${bars(days.map((d) => u.per_day[d].claude_code_tokens || 0), days.map((d) => d.slice(8)))}` : ""}
+      <div class="list" style="margin-top:10px">${Object.entries(u.by_tool).map(([t, v]) => `<div class="item"><div class="main"><b>${esc(t)}</b><span class="d">節約 ${k(v.saved_tokens || 0)}・返した ${k(v.returned_tokens || 0)}</span></div><span>${v.calls} 回</span></div>`).join("") || '<p class="muted">この月はまだ記録がありません</p>'}</div>`;
+  }).catch(() => {});
   $("rcMonth").onchange = () => renderRecap($("rcMonth").value);
   $("page").querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openConv(b.dataset.open)));
   $("rcAsk").onclick = async () => {

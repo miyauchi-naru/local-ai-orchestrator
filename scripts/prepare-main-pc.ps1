@@ -11,14 +11,14 @@
       → Spark の scripts\setup-spark.ps1 -PublicKey "<この 1 行>" に渡す（公開鍵なので会話に貼ってよい）
     - Claude Code の MCP の待ち時間を延ばす（~/.claude/settings.json の MCP_TOOL_TIMEOUT）
     - ~/.claude/CLAUDE.md に lao の使い方を足す（前の版があれば書き換える）
-    - Claude Code のコマンド（/spark-image、/spark-video、/spark-summary、/spark-status、/spark-get、/spark-open）を入れる
+    - Claude Code のコマンド（/spark-image、/spark-video、/spark-summary、/spark-status、/spark-get、/spark-open、/spark-usage）を入れる
     - Spark とのやりとりの道具 ~/.lao/spark.ps1 を置き、Claude Code が確認なしで流せるようにする
   -SparkHost を付けたとき（Spark の setup-spark.ps1 が済んだ後）：
     - ~/.ssh/config に Host spark を足す（lao の画面用のトンネルは下のタスクが張る）
     - 初回の接続で Spark のホスト鍵を登録し、lao mcp --check でつながるか確かめる
     - Spark の IP と MAC アドレス（Wake-on-LAN 用）を ~/.lao/spark.json に記録する
     - Claude Code に lao を登録する（claude mcp add lao --scope user）
-    - ログオン時に lao の画面用のトンネルを張り続けるタスク、毎日バックアップを取ってくるタスクを登録する
+    - ログオン時に lao の画面用のトンネルを張り続けるタスク、毎日バックアップを取ってきて Claude Code のトークンの使用量を送るタスクを登録する
     - デスクトップとスタートメニューに「lao（Spark）」を置く（押すと lao の画面が開く）
 
 .EXAMPLE
@@ -166,8 +166,9 @@ if ($SparkHost) {
     Register-ScheduledTask -TaskName "lao-spark-tunnel" -Action $a -Trigger $t -Settings $st -Force | Out-Null
     Start-ScheduledTask -TaskName "lao-spark-tunnel"
   }
-  Step "毎日 Spark のバックアップを取ってくるタスク（lao-spark-backup、12:30。PC が切れていたら次に起きたとき）を登録する" {
-    $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SparkPs1`" backup"
+  Step "毎日 Spark のバックアップを取ってきて、Claude Code のトークンの使用量を Spark へ送るタスク（lao-spark-backup、12:30。PC が切れていたら次に起きたとき）を登録する" {
+    $a = @("backup", "usage") | ForEach-Object {
+      New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SparkPs1`" $_" }
     $t = New-ScheduledTaskTrigger -Daily -At "12:30"
     $st = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -RunOnlyIfNetworkAvailable
     Register-ScheduledTask -TaskName "lao-spark-backup" -Action $a -Trigger $t -Settings $st -Force | Out-Null

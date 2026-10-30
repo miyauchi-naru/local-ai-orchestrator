@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import secrets
 import shutil
@@ -267,6 +268,21 @@ def cmd_backup(args) -> int:
     return 0
 
 
+def cmd_usage(args) -> int:
+    from .config import load_machine
+    from .usage import UsageLog, summary_text
+
+    config, _ = _paths(args)
+    log = UsageLog(Path(load_machine(config).path_of("root")) / "usage")
+    try:
+        r = log.report(args.month or "")
+    except ValueError as e:
+        print(e)
+        return 1
+    print(json.dumps(r, ensure_ascii=False, indent=1) if args.json else summary_text(r))
+    return 0
+
+
 def cmd_key(args) -> int:
     """lao serve の API キーを出す（メイン PC の準備スクリプトが画面のショートカットを作るときに使う）。"""
     from .config import load_machine
@@ -320,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("backup", help="会話・記憶・設定などを zip にまとめ、場所を表示する")
     sp.add_argument("--keep", type=int, default=14, help="残すバックアップの数")
     sub.add_parser("key", help="lao serve の API キーを表示する")
+    sp = sub.add_parser("usage", help="Claude のトークンの記録（lao に任せた分の節約と、Claude Code の実際の使用量）")
+    sp.add_argument("--month", help="YYYY-MM（省略すると今月）")
+    sp.add_argument("--json", action="store_true", help="JSON で出す（動画やグラフ用）")
     args = p.parse_args(argv)
     if args.cmd == "doctor":
         return cmd_doctor(args)
@@ -335,8 +354,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sandbox_check(args)
     if args.cmd == "mcp":
         return cmd_mcp(args)
-    if args.cmd in ("update", "backup", "key"):
-        return {"update": cmd_update, "backup": cmd_backup, "key": cmd_key}[args.cmd](args)
+    if args.cmd in ("update", "backup", "key", "usage"):
+        return {"update": cmd_update, "backup": cmd_backup, "key": cmd_key, "usage": cmd_usage}[args.cmd](args)
     return cmd_p0(args)
 
 
