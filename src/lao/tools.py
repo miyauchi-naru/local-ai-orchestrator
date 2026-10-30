@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Configuration
+from .image_styles import ASPECTS
 from .library import Library
 
 REF_RE = re.compile(r"^[0-9a-f]{12}@[1-9][0-9]{0,5}$")
@@ -86,8 +87,11 @@ ALL_TOOLS = [
         {
             "prompt": Param("string", "生成内容（英語推奨）", True, max_length=4000),
             "negative_prompt": Param("string", "避けたい内容", max_length=2000),
-            "width": Param("integer", "幅（px）", minimum=256, maximum=2048),
-            "height": Param("integer", "高さ（px）", minimum=256, maximum=2048),
+            "width": Param("integer", "幅（px）。aspect より優先", minimum=256, maximum=2048),
+            "height": Param("integer", "高さ（px）。aspect より優先", minimum=256, maximum=2048),
+            "aspect": Param("string", "縦横比（既定 1:1）", enum=list(ASPECTS)),
+            "count": Param("integer", "枚数（seed を 1 ずつ変えて作る。既定 1）", minimum=1, maximum=8),
+            "style": Param("string", "保存したスタイルの名前（前置き・避けたい内容・縦横比を足す）", max_length=40),
             "seed": Param("integer", "乱数シード", minimum=0, maximum=2**32 - 1),
         },
     ),

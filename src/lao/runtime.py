@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from .config import Component, Configuration, Environment, MachineConfig, check_policy, missing_capabilities
-from .lock import InferenceLock
+from .lock import GENERATE, InferenceLock, priority_of
 from .memory import Decision, MemoryGovernor
 
 
@@ -59,6 +60,14 @@ class Runtime:
         self._factory = engine_factory
         self._engines: dict[str, Engine] = {}
         self._loading = asyncio.Lock()
+        self.last_used = time.monotonic()
+        h = machine.raw.get("health", {})
+        # 熱いときの小休止：生成の区切りの前に GPU の温度を見て、高ければ下がるまで待つ（ノート PC で蓋を閉じて使うため）
+        self.cool_above = float(h.get("cooldown_above_c", 85))
+        self.cool_to = float(h.get("cooldown_to_c", 75))
+        self.cool_max_seconds = float(h.get("cooldown_max_seconds", 600))
+        self.temp_probe = None  # () -> 温度（℃）か None。Service が渡す
+        self.cooling: float | None = None  # 冷ましている間は温度
 
     def resident_estimate(self, c: Component) -> float:
         m = self.machine.measured(self.env.id, c.key)
@@ -94,14 +103,35 @@ class Runtime:
         ロード確認と実行を同じロックの中で行う。
         """
         async with self.lock.hold(holder):
+            if priority_of(holder) == GENERATE:
+                await self.cool_down()
+            self.last_used = time.monotonic()
             await self.ensure(keys, work_gb)
             if job_id and work_gb:
                 self.governor.reserve(job_id, work_gb)
             try:
                 yield [self.engine(k) for k in keys]
             finally:
+                self.last_used = time.monotonic()
                 if job_id and work_gb:
                     self.governor.release(job_id)
+
+    async def cool_down(self, interval: float = 15.0) -> float:
+        """GPU が cool_above を超えていたら、cool_to まで下がるか cool_max_seconds たつまで待つ。待った秒数を返す。"""
+        if not self.temp_probe or self.cool_above <= 0:
+            return 0.0
+        t = await asyncio.to_thread(self.temp_probe)
+        if t is None or t < self.cool_above:
+            return 0.0
+        start = time.monotonic()
+        try:
+            while t is not None and t > self.cool_to and time.monotonic() - start < self.cool_max_seconds:
+                self.cooling = t
+                await asyncio.sleep(interval)
+                t = await asyncio.to_thread(self.temp_probe)
+        finally:
+            self.cooling = None
+        return time.monotonic() - start
 
     async def unload(self, key: str) -> None:
         eng = self._engines.get(key)
@@ -113,15 +143,48 @@ class Runtime:
         for k in list(self._engines):
             await self.unload(k)
 
+    def loaded(self) -> list[str]:
+        return [k for k, e in self._engines.items() if e.running]
+
+    async def unload_if_idle(self, idle_seconds: float, now: float | None = None) -> list[str]:
+        """idle_seconds 使われていなければ、読み込んだ部品をすべて下ろす（次に使うときに読み直す）。
+
+        蓋を閉じて置いたままの PC で、使わないモデルが熱と電気を使い続けないようにする。
+        推論ロックが空いているときだけ行う。
+        """
+        keys = self.loaded()
+        if not keys or idle_seconds <= 0 or self.lock.status().get("holder"):
+            return []
+        if (now if now is not None else time.monotonic()) - self.last_used < idle_seconds:
+            return []
+        async with self._loading:
+            for k in keys:
+                await self.unload(k)
+        return keys
+
+    async def preload(self) -> list[str]:
+        """構成の部品を、予算に入る分だけ先に読み込む（次の依頼の待ちを減らす）。対話の部品から順に。"""
+        order = [self.conf.chat_component] + [k for k in self.conf.components if k != self.conf.chat_component]
+        done = []
+        for k in order:
+            try:
+                await self.ensure([k])
+            except NotAdmitted:
+                continue
+            done.append(k)
+        self.last_used = time.monotonic()
+        return done
+
     def status(self) -> dict:
         return {
             "environment": {"id": self.env.id, "name": self.env.name},
             "configuration": {"id": self.conf.id, "label": self.conf.label, "status": self.conf.status},
             "limited": self.limited,
             "capabilities": sorted(self.conf.capabilities()),
-            "loaded": [k for k, e in self._engines.items() if e.running],
+            "loaded": self.loaded(),
             "memory": self.governor.snapshot(),
             "lock": self.lock.status(),
+            "cooling": self.cooling,
         }
 
 

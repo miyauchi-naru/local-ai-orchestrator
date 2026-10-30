@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -AddClaudeM
 ```
 
 - SSH の鍵が無ければ作り、**公開鍵の 1 行**を表示します（クリップボードにも入ります）。公開鍵は秘密ではないので、このプロジェクトの会話に貼ってください。2 章で Spark の Claude が使います。
-- Claude Code の MCP の待ち時間を 15 分に延ばし（動画の生成を待てるように）、`~/.claude/CLAUDE.md` に lao の使い方を足します。
+- Claude Code の MCP の待ち時間を 15 分に延ばし（動画の生成を待てるように）、`~/.claude/CLAUDE.md` に lao の使い方を書き、コマンド（`/spark-image` など）と Spark とのやりとりの道具 `~/.lao/spark.ps1` を入れます（[remote.md](remote.md) の「準備（メイン PC 側）」）。
 
 ### 0.3 リポジトリで済ませたこと
 
@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -AddClaudeM
 | 記録 | PC 名・利用者名・Windows の版・メモリ・C/D の容量・ネットワーク・IP を表示する |
 | power | 下の 2.2 節（蓋を閉じても動き続ける設定） |
 | install | `scripts\install-native.ps1`：フォルダ（C:\lao、D:\lao）、Python 3.12（Arm64）、ffmpeg、Git・CMake・Build Tools、CUDA Toolkit（`-CudaInstaller` を渡したとき）、lao（`C:\lao\venv`）、llama.cpp の CUDA ビルド、ComfyUI と PyTorch（CUDA）、`config\machine.toml` の作成と自動記入 |
-| remote | `scripts\enable-remote.ps1`：OpenSSH サーバー（鍵だけ、この利用者だけ、同じ LAN のプライベートネットワークからだけ）、公開鍵の登録、受け取り箱 `D:\lao\inbox`、ログオン時に lao serve を起動するタスク（[remote.md](remote.md)） |
+| remote | `scripts\enable-remote.ps1`：OpenSSH サーバー（鍵だけ、この利用者だけ、同じ LAN のプライベートネットワークからだけ）、公開鍵の登録、受け取り箱 `D:\lao\inbox`、PC の起動時（サインイン不要）とログオン時に lao serve を起動して落ちたら起動し直すタスク、デスクトップの「lao」（[remote.md](remote.md)） |
 | check | `lao doctor`、GPU が確保できる量の測定（モデルなし）、lao serve の起動と `lao mcp --check` |
 
 ### 2.2 蓋を閉じても動き続ける設定（power の段階）
@@ -98,12 +98,14 @@ Spark は蓋を閉じて置いたまま、メイン PC から使う前提です�
 - 蓋を閉じたときの動作（AC）を「何もしない」、スリープと休止状態（AC）を「なし」、画面は 5 分で消す（`powercfg`）
 - 今のネットワークを「プライベート」にする（パブリックのままだと SSH が通らない。**家の LAN で実行すること**）
 - ネットワーク アダプターの「電力の節約のために電源をオフにできる」を外す（変えられない機種もある）
+- 有線 LAN のアダプターで Wake-on-LAN（マジック パケット）を有効にする（メイン PC の `spark.ps1 wake` で起こせるように）
 - Windows Update のアクティブ時間を 8 時〜2 時にする（この間は勝手に再起動しない）
 
-スクリプトで変えられないことは次の二つです。
+lao の側で行うことと、スクリプトで変えられないことは次のとおりです。
 
-- **再起動の後は、一度 Spark にサインインするまで lao serve が起動しません**（タスクがサインイン時に起動するため）。勝手に再起動されたら、蓋を開けてサインインしてください。長い生成の前は Windows Update の「更新の一時停止」を使うと安全です。
-- **熱：** 蓋を閉じると放熱が落ちる機種があります。硬く平らな所に置き、吸気口・排気口をふさがない（布団や鞄の中に置かない）。3 章の 30 分以上の連続生成は蓋を閉じた状態でも一度行い、速度が大きく落ちないかを見ます。
+- **再起動の後：** lao serve は PC の起動時にサインインなしで起動します（タスクの S4U）。この形で GPU が使えるかは 3 章で確かめ、使えなければ `-ServeAtLogonOnly` で流し直します（その場合は再起動の後に一度サインインが要ります）。長い生成の前は Windows Update の「更新の一時停止」を使うと安全です。
+- **熱：** 蓋を閉じると放熱が落ちる機種があります。硬く平らな所に置き、吸気口・排気口をふさがない（布団や鞄の中に置かない）。lao は生成の区切りごとに GPU の温度を見て、85℃ を超えていたら 75℃ まで下がるのを待ってから次へ進みます（[remote.md](remote.md) の「熱・電気・容量の手入れ」）。使わないモデルは 30 分で下ろします。
+- **バッテリー：** つなぎっぱなしで使うので、メーカーのアプリに充電の上限（80% 前後）があれば設定します。機種ごとのアプリなので、Spark の Claude が場所を調べて利用者に伝えます。
 
 ### 2.3 止まったとき
 
@@ -124,6 +126,11 @@ Spark は蓋を閉じて置いたまま、メイン PC から使う前提です�
 3. **画像・動画（E2・E4）：** ComfyUI でワークフローを作り、API 形式で書き出して `catalog/workflows/` に置き、`bindings` を埋めます（[comfyui-workflows.md](comfyui-workflows.md)）。
 4. **読み上げ（E3）：** TTS の候補を選び、[tts-contract.md](tts-contract.md) の形の中継を用意して `[engines.tts]` に書きます。
 5. **評価：** 日本語の評価課題（[prep.md](prep.md) 4 章）を各候補で行います。仕上がりの良し悪しは利用者が見て決めます。
+6. **使い勝手の確認（実機でしか分からないこと）：**
+   - Spark を再起動し、**サインインせずに**メイン PC から `lao の status を見て` が通るか。通っても画像を 1 枚作り、GPU が使えているか（遅すぎないか）を見る。だめなら `setup-spark.ps1 -Phase remote -ServeAtLogonOnly -Execute`
+   - `nvidia-smi --query-gpu=temperature.gpu,clocks_event_reasons.hw_thermal_slowdown --format=csv` が値を返すか（返さなければ小休止と温度の知らせは働かない）。蓋を閉じて 30 分の連続生成を行い、温度と速度の変化から `[health] cooldown_above_c`・`cooldown_to_c` を決める
+   - 使わないモデルを下ろしたとき、次の依頼での読み直しに何秒かかるか。長すぎれば `[memory] idle_unload_minutes` を延ばす
+   - メイン PC から `spark.ps1 wake`（有線 LAN のとき。バッテリーで眠らせてから試す）
 
 **利用者に聞いて決めること：** AI 用の予算（`[memory] budget_gb`、初期 96GB）、主に使う実行基盤（native か wsl2）、各環境の標準構成、第三者の量子化版を使うか（`[policy] allow_third_party_quantized`、初期は使わない）、UI を既存 OSS で済ませるか。決まった値は `lao configure --set 表.鍵=値` で書きます。
 
@@ -148,9 +155,9 @@ Spark は蓋を閉じて置いたまま、メイン PC から使う前提です�
 powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -SparkHost <PC 名か IP> -SparkUser <利用者名> -Execute
 ```
 
-- `~/.ssh/config` に `Host spark`（ブラウザ用の `LocalForward 8710` つき）を足し、初回の接続で Spark のホスト鍵を登録し、`lao mcp --check` でつながるか確かめ、Claude Code に lao を登録します。
-- 確かめ方：Claude Code で「lao の status を見て」→「猫の画像を 1 枚作って」。
-- ブラウザで lao の画面を使う：`ssh -N spark` を動かしたまま、Edge で `http://127.0.0.1:8710/?key=<api_key>`。キーは Spark の `config\machine.toml` の `[server] api_key` にあります（2 章で自動で固定済み）。Edge の「アプリとしてインストール」をしておくと楽です。
+- `~/.ssh/config` に `Host spark` を足し、初回の接続で Spark のホスト鍵を登録し、`lao mcp --check` でつながるか確かめ、Spark の IP と MAC を記録し、Claude Code に lao を登録し、lao の画面用のトンネルと毎日のバックアップのタスク、デスクトップの「lao（Spark）」を作ります。
+- 確かめ方：Claude Code で「lao の status を見て」→ `/spark-image 猫` → `/spark-get さっきの画像`。
+- lao の画面：デスクトップの「lao（Spark）」か `/spark-open`。以後、メイン PC で使うのは Claude Code と lao の画面だけです。
 - **蓋を閉じて確かめる：** Spark の蓋を閉じ、5 分ほど待ってから、もう一度「lao の status を見て」。通れば 2.2 節の設定が効いています。
 
 使い方とファイルのやりとりは [remote.md](remote.md) にあります。
@@ -164,11 +171,11 @@ powershell -ExecutionPolicy Bypass -File scripts\prepare-main-pc.ps1 -SparkHost 
 
 | 起きたこと | 見るところ |
 |---|---|
-| メイン PC から `ssh spark` が通らない | Spark のネットワークが「プライベート」か、Spark が眠っていないか、IP が変わっていないか（ルーターで固定するとよい）、Spark で `Get-Service sshd` が Running か |
+| メイン PC から Spark につながらない | Claude Code に「/spark-status」。`spark.ps1 check` が、名前が引けない（ルーターで IP を固定し `-SparkHost <IP>` で流し直す）・眠っている（`spark.ps1 wake`）・sshd・lao serve のどれかを出します |
 | `mcp --check` が lao serve につながらないと言う | Spark で lao serve が動いているか（再起動の後はサインインが要る。2.2 節）。`Get-ScheduledTask lao-serve` |
 | 蓋を閉じるとしばらくして切れる | `powercfg /query SCHEME_CURRENT SUB_BUTTONS LIDACTION` の AC が 0 か、スリープが「なし」か、アダプターの省電力。有線 LAN を試す |
 | 蓋を閉じると生成が遅くなる | 熱で絞られています（2.2 節）。置き方を変えるか、蓋を開けて使う |
-| ブラウザ用の `ssh -N spark` と Claude Code の lao がぶつかる | lao の登録に `-o ClearAllForwardings=yes` が付いているか（`claude mcp get lao`） |
+| lao の画面が開かない | タスク `lao-spark-tunnel` が動いているか（`Get-ScheduledTask lao-spark-tunnel`）。`spark.ps1 check` |
 | モデルの取得で 401・403 | Hugging Face で利用条件に同意したか、Spark の環境変数 `HF_TOKEN` があるか（入れた後に開いたターミナルで `claude remote-control` を起動し直す） |
 | `lao` が見つからない | フルパス `C:\lao\venv\Scripts\lao.exe` |
 

@@ -245,6 +245,42 @@ def cmd_mcp(args) -> int:
     return run(machine, url=args.url, check=args.check)
 
 
+def cmd_update(args) -> int:
+    from .config import load_machine
+    from .updater import UpdateError, update
+
+    config, _ = _paths(args)
+    try:
+        return update(load_machine(config), execute=args.execute, restart=not args.no_restart)
+    except UpdateError as e:
+        print(f"更新できませんでした：{e}")
+        return 1
+
+
+def cmd_backup(args) -> int:
+    from .config import load_machine
+    from .maintenance import backup
+
+    config, _ = _paths(args)
+    out = backup(Path(load_machine(config).path_of("root")), keep=args.keep)
+    print(out)
+    return 0
+
+
+def cmd_key(args) -> int:
+    """lao serve の API キーを出す（メイン PC の準備スクリプトが画面のショートカットを作るときに使う）。"""
+    from .config import load_machine
+    from .mcp import LaoError, server_key
+
+    config, _ = _paths(args)
+    try:
+        print(server_key(load_machine(config)))
+    except LaoError as e:
+        print(e, file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lao", description="RTX Spark 向けローカルAI環境ツール")
     p.add_argument("--config", help="machine.toml のパス")
@@ -278,6 +314,12 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--check", action="store_true", help="lao serve につながるかだけ確かめる")
     sp.add_argument("--url", help="lao serve の URL（既定は machine.toml の port）")
     sp.add_argument("--fake", action="store_true", help="lao serve --fake につなぐ")
+    sp = sub.add_parser("update", help="lao を最新にして lao serve を再起動する（動かなければ元に戻す）")
+    sp.add_argument("--execute", action="store_true", help="実際に更新する（無ければ手順の表示だけ）")
+    sp.add_argument("--no-restart", action="store_true", help="lao serve を再起動しない")
+    sp = sub.add_parser("backup", help="会話・記憶・設定などを zip にまとめ、場所を表示する")
+    sp.add_argument("--keep", type=int, default=14, help="残すバックアップの数")
+    sub.add_parser("key", help="lao serve の API キーを表示する")
     args = p.parse_args(argv)
     if args.cmd == "doctor":
         return cmd_doctor(args)
@@ -293,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sandbox_check(args)
     if args.cmd == "mcp":
         return cmd_mcp(args)
+    if args.cmd in ("update", "backup", "key"):
+        return {"update": cmd_update, "backup": cmd_backup, "key": cmd_key}[args.cmd](args)
     return cmd_p0(args)
 
 

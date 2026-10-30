@@ -34,7 +34,8 @@ param(
   [string]$CudaInstaller = "",      # install-native.ps1 に渡す
   [string]$Envs = "e1",             # models で取得・測定する環境（例：e1,e2）
   [int]$ActiveHoursStart = 8,       # Windows Update が再起動しない時間帯（最長 18 時間）
-  [int]$ActiveHoursEnd = 2
+  [int]$ActiveHoursEnd = 2,
+  [switch]$ServeAtLogonOnly         # lao serve を起動時（サインイン不要）でなくログオン時だけ起動する（enable-remote.ps1）
 )
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -91,6 +92,14 @@ if (Want "power") {
       catch { Write-Host "   $($a.Name)：この機種では変えられません（$($_.Exception.Message)）" }
     }
   }
+  Step "有線 LAN のアダプターで Wake-on-LAN（マジック パケット）を有効にする（メイン PC の spark.ps1 wake で起こせるように）" {
+    foreach ($a in Get-NetAdapter -Physical | Where-Object MediaType -eq "802.3") {
+      try {
+        Set-NetAdapterPowerManagement -Name $a.Name -WakeOnMagicPacket Enabled -ErrorAction Stop
+        Write-Host "   $($a.Name)：有効にしました"
+      } catch { Write-Host "   $($a.Name)：この機種では変えられません（$($_.Exception.Message)）" }
+    }
+  }
   Step "Windows Update のアクティブ時間を ${ActiveHoursStart} 時〜${ActiveHoursEnd} 時にする（この間は勝手に再起動しない）" {
     $k = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
     New-Item -Path $k -Force | Out-Null
@@ -113,6 +122,7 @@ if (Want "remote") {
   if ($PublicKey) { $args3.PublicKey = $PublicKey }
   if ($PublicKeyFile) { $args3.PublicKeyFile = $PublicKeyFile }
   if ($Execute) { $args3.Execute = $true }
+  if ($ServeAtLogonOnly) { $args3.ServeAtLogonOnly = $true }
   if (-not $PublicKey -and -not $PublicKeyFile) { Write-Warning "-PublicKey が無いので、この段階は飛ばします（メイン PC で scripts\prepare-main-pc.ps1 を実行すると表示されます）" }
   else { & "$PSScriptRoot\enable-remote.ps1" @args3 }
 }

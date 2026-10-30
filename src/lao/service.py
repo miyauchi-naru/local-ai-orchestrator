@@ -22,7 +22,14 @@ from .sandbox import Sandbox, SandboxConfig
 from .search import DocIndex
 from .schedule import ScheduleError, Task, TaskStore
 from .skills import SkillStore
+from .image_styles import StyleStore
 from .runtime import Runtime, default_engine_factory
+
+
+def gpu_temperature() -> float | None:
+    from .maintenance import gpu
+    g = gpu()
+    return g.get("temp_c") if g else None
 
 
 STYLES = {
@@ -72,6 +79,7 @@ class Service:
         self.settings_path = root / "settings.json"
         self.root = root
         self.tasks = TaskStore(root / "tasks.json")
+        self.styles = StyleStore(root / "image_styles.json")
         self.index = DocIndex(self.library, root / "index", embedder or self._embedder(root / "logs"))
         self.jobs = JobManager(machine.path_of("jobs"))
         ff = machine.raw.get("engines", {}).get("ffmpeg", {})
@@ -83,6 +91,7 @@ class Service:
         self._factory = engine_factory or default_engine_factory(machine, self.log_dir)
         self.memory_probe = memory_probe
         self.runtime: Runtime | None = None
+        self.temp_probe = gpu_temperature  # 試験では差し替える
         self.orchestrator: Orchestrator | None = None
 
     def environments(self) -> list[dict]:
@@ -277,6 +286,28 @@ class Service:
         while True:
             await asyncio.sleep(interval)
             await self.run_due()
+            await self.unload_idle()
+            self.daily_backup()
+
+    def daily_backup(self, now: float | None = None) -> Path | None:
+        """1 日に 1 回、会話・記憶・設定を root/backups に zip で残す（メイン PC が毎日それを取りに来る）。"""
+        from .maintenance import backup
+        if not self.machine.raw.get("backup", {}).get("daily", True):
+            return None
+        now = now or time.time()
+        latest = max((p.stat().st_mtime for p in (self.root / "backups").glob("lao-*.zip")), default=0)
+        if now - latest < 86400:
+            return None
+        return backup(self.root, keep=int(self.machine.raw.get("backup", {}).get("keep", 14)), now=now)
+
+    def idle_unload_seconds(self) -> float:
+        return float(self.machine.raw.get("memory", {}).get("idle_unload_minutes", 30)) * 60
+
+    async def unload_idle(self, now: float | None = None) -> list[str]:
+        """しばらく使われていないモデルを下ろす。ジョブの実行中は下ろさない。"""
+        if not self.runtime or self.busy():
+            return []
+        return await self.runtime.unload_if_idle(self.idle_unload_seconds(), now)
 
     async def run_due(self, now: float | None = None) -> list[Task]:
         done = []
@@ -380,8 +411,10 @@ class Service:
             await self.runtime.unload_all()
         self.runtime = Runtime(self.machine, env, env.configurations[conf_id], self._factory, lock=self.lock,
                                probe=self.memory_probe)
+        self.runtime.temp_probe = self.temp_probe
         self.orchestrator = Orchestrator(self.runtime, self.library, self.jobs, self.media,
                                          self.work_dir, self.catalog_dir, self.sandbox, self.index)
+        self.orchestrator.styles = self.styles
         return self.runtime
 
     async def shutdown(self) -> None:
