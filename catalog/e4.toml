@@ -4,7 +4,7 @@ name = "動画生成"
 required_inputs = ["text", "image", "video", "audio"]
 required_outputs = ["text", "video"]
 
-# 音声付き。LTX-2.x Community License（年収1,000万ドル以上の組織は有償）
+# 音声付き。LTX-2.x Community License：年商 1,000 万ドル未満なら商用無料（グループ合算）。AI 生成である旨の表示が必要
 [[configurations]]
 id = "e4-ltx"
 label = "標準（音声付き LTX）"
@@ -30,7 +30,7 @@ args = ["--jinja"]
 role = "video_gen"
 engine = "comfyui"
 model = "LTX-2.5"
-source = { hub = "huggingface", repo = "Lightricks/LTX-2.5", files = [], revision = "", sha256 = {} }   # TODO(P0): LTX-2.5 は見つからない（2026-10-29）。Lightricks/LTX-2 か LTX-2.3-fp8 の公式 FP8 から選ぶ
+source = { hub = "huggingface", repo = "Lightricks/LTX-2.5", files = [], revision = "", sha256 = {} }   # TODO(P0): 2026-08-11 公開（22B、同意が必要なゲート付き）。FP8／NVFP4 版のファイル名を確認
 format = "safetensors"
 quantization = "publisher"          # 公式 FP8
 precision = { publisher = "FP8", runtime = "FP8" }

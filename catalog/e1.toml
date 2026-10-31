@@ -80,6 +80,44 @@ context = { max = 32768, default = 16384 }
 capabilities = ["text", "image", "audio", "video_frames"]
 args = ["--jinja"]
 
+# 大型の推論役を Mistral Small 4（119B・稼働 6.5B の MoE、画像を見られる、Apache-2.0、2026-03）にした構成。
+# 稼働が小さいので gpt-oss-120b より速く、画像も見られる。音声は理解モデルに任せる
+[[configurations]]
+id = "e1-mistral4"
+label = "Mistral Small 4＋理解の二段"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "Mistral-Small-4-119B-2603"
+source = { hub = "huggingface", repo = "", files = ["*IQ4_XS*.gguf", "mmproj*.gguf"], revision = "", sha256 = {} }   # TODO(P0): unsloth の GGUF のファイル名と大きさを確認
+format = "gguf"
+quantization = "publisher"          # IQ4_XS で約 63GB の見込み（Q8_0 は 126GB で載らない）
+precision = { publisher = "IQ4_XS", runtime = "IQ4_XS", kv_cache = "f16" }
+license = "Apache-2.0"
+size_gb = 64
+mem = { weights_gb = 63, overhead_gb = 3 }
+context = { max = 262144, default = 32768 }
+capabilities = ["text", "tool_calls", "image", "reasoning"]
+args = ["--jinja", "-fa", "on"]
+
+[configurations.components.perceiver]
+role = "perceive"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0): リポジトリ名を確認
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
 # 単一構成：一つのモデルで対話と理解を兼ねる（品質が同等ならこちらを選ぶ）
 [[configurations]]
 id = "e1-omni"

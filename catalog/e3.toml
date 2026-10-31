@@ -28,12 +28,14 @@ args = ["--jinja"]
 [configurations.components.tts]
 role = "tts"
 engine = "tts"
-model = "TODO(P0): 日本語対応・参照音声で声質指定できる TTS（CosyVoice 系、Qwen3-TTS 等から選定）"
-source = { hub = "huggingface", repo = "", files = [], revision = "", sha256 = {} }
+# 2026-10-31 の調査で選定：日本語・3 秒の参照音声で声をまねる・Apache-2.0。次点は openbmb/VoxCPM2（Apache-2.0）
+# 声をまねるのは自分の声か許可を得た声だけにする
+model = "Qwen3-TTS-12Hz-1.7B-Base"
+source = { hub = "huggingface", repo = "Qwen/Qwen3-TTS-12Hz-1.7B-Base", files = [], revision = "", sha256 = {} }   # TODO(P0): Windows on Arm で動く実行方法（qwen-tts）を確認
 format = "engine-specific"
 quantization = "none"
 precision = { publisher = "BF16", runtime = "BF16" }
-license = "TODO(P0)"
+license = "Apache-2.0"
 size_gb = 8
 mem = { weights_gb = 6, overhead_gb = 4 }
 capabilities = ["speech_generate", "voice_reference"]

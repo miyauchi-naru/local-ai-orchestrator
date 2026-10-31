@@ -147,11 +147,14 @@ lao の側で行うことと、スクリプトで変えられないことは次�
 | e1-omni の Qwen3-Omni-30B-A3B-Instruct | [ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF](https://huggingface.co/ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF) | ある |
 | e2 の Qwen-Image | [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main/split_files) | ある。`split_files/` に diffusion_models（bf16・fp8・nvfp4、2512 版）と text_encoders（qwen_2.5_vl_7b） |
 | e4-wan の Wan2.2-I2V-A14B | [Comfy-Org/Wan_2.2_ComfyUI_Repackaged](https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged) | ある。`split_files/diffusion_models/` に i2v の high_noise・low_noise（14B、fp8_scaled）など |
-| e4-ltx の LTX | カタログは `Lightricks/LTX-2.5` | **見つからない。** 公式は [Lightricks/LTX-2](https://huggingface.co/Lightricks/LTX-2)（19B、fp8 あり）と [Lightricks/LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3)・[LTX-2.3-fp8](https://huggingface.co/Lightricks/LTX-2.3-fp8)（22B）。到着後にどちらにするかを決めてカタログを直す |
+| e4-ltx の LTX | [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) | 2026-08-11 に公開された（同意が必要なゲート付き、22B、NVFP4／int8 版あり）。年商 1,000 万ドル未満は商用無料。FP8 か NVFP4 のファイルに `files` を絞る |
 | 意味検索の Qwen3-Embedding-0.6B | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | ある。`Qwen3-Embedding-0.6B-f16.gguf` |
 | e1-lfm3-omni の LFM3-Omni | 未定 | 配布元を到着後に確かめる |
 | e2-qwen36 の Qwen3.6-35B-A3B | [unsloth/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) | ある（2026-10-31）。Q8_0 36.9GB、UD-Q4_K_XL 22.4GB、mmproj-BF16 0.9GB。Apache-2.0 |
 | e2-qwen38 の Qwen3.8-27B | 公式は [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B)（safetensors） | GGUF と llama.cpp の対応は未確認。無ければ候補から外す |
+| e2-gemma31 の gemma-4-31B-it | 公式 [google/gemma-4-31B-it](https://huggingface.co/google/gemma-4-31B-it) | GGUF（ggml-org か Google の QAT 版）と mmproj を確認 |
+| e1-mistral4 の Mistral-Small-4-119B-2603 | 公式 [mistralai/Mistral-Small-4-119B-2603](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603) | カードが unsloth の GGUF を案内。IQ4_XS（約 63GB）のファイル名を確認 |
+| e3 の Qwen3-TTS-12Hz-1.7B-Base | [Qwen/Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | ある（Apache-2.0）。Windows on Arm で qwen-tts が動くか確認 |
 | e1-lfm25 の LFM2.5-24B-A2B | [LiquidAI/LFM2.5-24B-A2B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF) | ある（2026-10-31）。Q4_0（QAD 版 13.6GB）・Q4_K_M 14.5GB・Q8_0 25.5GB・BF16 48GB。文字のみ。ライセンスは lfm1.0 |
 
 ## 4 メイン PC から使う（最後につなぐ）
