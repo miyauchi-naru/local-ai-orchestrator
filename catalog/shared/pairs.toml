@@ -22,6 +22,8 @@ chat = [
   "e2.e2-standard.chat",       # Gemma 4 26B-A4B
   "e2.e2-qwen36.chat",         # Qwen3.6-35B-A3B（画像を見られる。ツール呼び出しが強い）
   "e2.e2-qwen38.chat",         # Qwen3.8-27B（密。GGUF が出ていなければ P0 で外す）
+  "e2.e2-gemma31.chat",        # Gemma 4 31B（密。画像を見られる）
+  "e1.e1-mistral4.chat",       # Mistral Small 4（119B・稼働 6.5B。画像を見られる。生成モデルと同時には載りにくい）
   "e1.e1-omni.omni",           # Qwen3-Omni-30B-A3B
   "e1.e1-lfm3-omni.omni",      # LFM3-Omni
   "e4.e4-ltx.chat",            # Gemma 4 E4B（小さい。メモリの比較用）
