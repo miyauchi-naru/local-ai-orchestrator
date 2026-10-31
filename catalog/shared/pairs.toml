@@ -24,6 +24,7 @@ chat = [
   "e1.e1-lfm3-omni.omni",      # LFM3-Omni
   "e4.e4-ltx.chat",            # Gemma 4 E4B（小さい。メモリの比較用）
   "e1.e1-standard.reasoner",   # gpt-oss-120b（画像を見られないので「見て直す」は 0 になる）
+  "e1.e1-lfm25.reasoner",      # LFM2.5-24B-A2B（ツール呼び出しが強い。画像は見られないので「見て直す」は 0）
 ]
 image = ["e2.e2-standard.imagegen"]
 # 動画の課題に使う生成モデル。空にすると動画の課題は飛ばす（組み合わせが video の数だけ増える）

@@ -42,6 +42,44 @@ context = { max = 32768, default = 16384 }
 capabilities = ["text", "image", "audio", "video_frames"]
 args = ["--jinja"]
 
+# 二段構成の軽量版：LFM2.5-24B-A2B（24B・稼働 2.45B の MoE、文字のみ、必ず考えてから答える）＋理解モデル
+# ツール呼び出し・指示追従のベンチ（BFCLv4・IFBench）が高い。画像は見られないので「見て直す」は理解モデルに頼らない
+[[configurations]]
+id = "e1-lfm25"
+label = "軽量（LFM2.5＋理解の二段）"
+status = "candidate"
+chat_component = "reasoner"
+
+[configurations.components.reasoner]
+role = "chat"
+engine = "llama"
+model = "LFM2.5-24B-A2B"
+source = { hub = "huggingface", repo = "LiquidAI/LFM2.5-24B-A2B-GGUF", files = ["*Q8_0*.gguf"], revision = "", sha256 = {} }   # TODO(P0): ファイル名を確認（Q4_0 は量子化を前提に学習した QAD 版）
+format = "gguf"
+quantization = "publisher"          # 配布元の Q8_0（25.5GB）。軽さを比べるなら QAD-Q4_0（13.6GB）も試す
+precision = { publisher = "Q8_0", runtime = "Q8_0", kv_cache = "f16" }
+license = "LFM Open License v1.0"   # lfm1.0。商用は年商の条件あり。P0 で条文を確認
+size_gb = 26
+mem = { weights_gb = 26, overhead_gb = 3 }
+context = { max = 131072, default = 32768 }
+capabilities = ["text", "tool_calls", "reasoning"]
+args = ["--jinja", "-fa", "on", "--temp", "0.1", "--top-k", "50", "--repeat-penalty", "1.05"]   # 配布元の推奨値
+
+[configurations.components.perceiver]
+role = "perceive"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0): リポジトリ名を確認
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
 # 単一構成：一つのモデルで対話と理解を兼ねる（品質が同等ならこちらを選ぶ）
 [[configurations]]
 id = "e1-omni"
