@@ -150,6 +150,8 @@ lao の側で行うことと、スクリプトで変えられないことは次�
 | e4-ltx の LTX | カタログは `Lightricks/LTX-2.5` | **見つからない。** 公式は [Lightricks/LTX-2](https://huggingface.co/Lightricks/LTX-2)（19B、fp8 あり）と [Lightricks/LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3)・[LTX-2.3-fp8](https://huggingface.co/Lightricks/LTX-2.3-fp8)（22B）。到着後にどちらにするかを決めてカタログを直す |
 | 意味検索の Qwen3-Embedding-0.6B | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | ある。`Qwen3-Embedding-0.6B-f16.gguf` |
 | e1-lfm3-omni の LFM3-Omni | 未定 | 配布元を到着後に確かめる |
+| e2-qwen36 の Qwen3.6-35B-A3B | [unsloth/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) | ある（2026-10-31）。Q8_0 36.9GB、UD-Q4_K_XL 22.4GB、mmproj-BF16 0.9GB。Apache-2.0 |
+| e2-qwen38 の Qwen3.8-27B | 公式は [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B)（safetensors） | GGUF と llama.cpp の対応は未確認。無ければ候補から外す |
 | e1-lfm25 の LFM2.5-24B-A2B | [LiquidAI/LFM2.5-24B-A2B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF) | ある（2026-10-31）。Q4_0（QAD 版 13.6GB）・Q4_K_M 14.5GB・Q8_0 25.5GB・BF16 48GB。文字のみ。ライセンスは lfm1.0 |
 
 ## 4 メイン PC から使う（最後につなぐ）
