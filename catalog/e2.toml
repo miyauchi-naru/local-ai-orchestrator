@@ -45,3 +45,87 @@ bindings = { prompt = "", negative = "", seed = "", width = "", height = "", ima
 loras = []
 # 会話モデルが組み合わせて使うパターン（lao pattern new／approve で用意する。docs/patterns.md）
 patterns = "patterns/e2-qwen-image"
+
+# 会話モデルを Qwen3.6-35B-A3B（35B・稼働 3B の MoE、画像と動画を見られる、2026-04）にした構成。生成は標準と同じ
+[[configurations]]
+id = "e2-qwen36"
+label = "Qwen3.6 で指示を書く"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "Qwen3.6-35B-A3B"
+source = { hub = "huggingface", repo = "unsloth/Qwen3.6-35B-A3B-GGUF", files = ["*Q8_0*.gguf", "mmproj-BF16.gguf"], revision = "", sha256 = {} }   # TODO(P0): ファイル名を確認
+format = "gguf"
+quantization = "publisher"          # Q8_0 36.9GB（軽くするなら UD-Q4_K_XL 22.4GB）
+precision = { publisher = "Q8_0", runtime = "Q8_0", kv_cache = "f16" }
+license = "Apache-2.0"
+size_gb = 38
+mem = { weights_gb = 38, overhead_gb = 3 }
+context = { max = 262144, default = 32768 }
+capabilities = ["text", "tool_calls", "image", "reasoning"]
+args = ["--jinja", "-fa", "on"]
+[configurations.components.imagegen]
+role = "image_gen"
+engine = "comfyui"
+model = "Qwen-Image / Qwen-Image-Edit"
+source = { hub = "huggingface", repo = "Comfy-Org/Qwen-Image_ComfyUI", files = [], revision = "", sha256 = {} }   # TODO(P0): ファイル一覧
+format = "safetensors"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16" }
+license = "Apache-2.0"
+size_gb = 60
+mem = { weights_gb = 40, overhead_gb = 8 }
+capabilities = ["image_generate", "image_edit"]
+workflow = "workflows/e2-generate.json"
+edit_workflow = "workflows/e2-edit.json"
+# TODO(P0): ComfyUI から書き出した JSON のノード番号.入力名（steps 以降は空なら generate_image で変えられないだけ）
+bindings = { prompt = "", negative = "", seed = "", width = "", height = "", image = "", steps = "", cfg = "", lora = "", lora_strength = "" }
+# generate_image の lora に指定してよい追加モデルのファイル名（ComfyUI の models/loras に置いたもの）
+loras = []
+# 会話モデルが組み合わせて使うパターン（lao pattern new／approve で用意する。docs/patterns.md）
+patterns = "patterns/e2-qwen-image"
+
+# 会話モデルを Qwen3.8-27B（密な 27B、画像と動画を見られる、2026-08）にした構成。密なので MoE より遅い。生成は標準と同じ
+[[configurations]]
+id = "e2-qwen38"
+label = "Qwen3.8 で指示を書く"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "Qwen3.8-27B"
+source = { hub = "huggingface", repo = "", files = ["*Q8_0*.gguf", "mmproj*.gguf"], revision = "", sha256 = {} }   # TODO(P0): GGUF の配布元と llama.cpp の対応を確認（公式は Qwen/Qwen3.8-27B の safetensors のみ）
+format = "gguf"
+quantization = "publisher"          # Q8_0 で約 29GB の見込み
+precision = { publisher = "Q8_0", runtime = "Q8_0", kv_cache = "f16" }
+license = "Apache-2.0"
+size_gb = 30
+mem = { weights_gb = 30, overhead_gb = 4 }
+context = { max = 262144, default = 32768 }
+capabilities = ["text", "tool_calls", "image", "reasoning"]
+args = ["--jinja", "-fa", "on"]
+[configurations.components.imagegen]
+role = "image_gen"
+engine = "comfyui"
+model = "Qwen-Image / Qwen-Image-Edit"
+source = { hub = "huggingface", repo = "Comfy-Org/Qwen-Image_ComfyUI", files = [], revision = "", sha256 = {} }   # TODO(P0): ファイル一覧
+format = "safetensors"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16" }
+license = "Apache-2.0"
+size_gb = 60
+mem = { weights_gb = 40, overhead_gb = 8 }
+capabilities = ["image_generate", "image_edit"]
+workflow = "workflows/e2-generate.json"
+edit_workflow = "workflows/e2-edit.json"
+# TODO(P0): ComfyUI から書き出した JSON のノード番号.入力名（steps 以降は空なら generate_image で変えられないだけ）
+bindings = { prompt = "", negative = "", seed = "", width = "", height = "", image = "", steps = "", cfg = "", lora = "", lora_strength = "" }
+# generate_image の lora に指定してよい追加モデルのファイル名（ComfyUI の models/loras に置いたもの）
+loras = []
+# 会話モデルが組み合わせて使うパターン（lao pattern new／approve で用意する。docs/patterns.md）
+patterns = "patterns/e2-qwen-image"
