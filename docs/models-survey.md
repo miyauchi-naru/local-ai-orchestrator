@@ -13,6 +13,7 @@ RTX Spark（128GB、モデルに使うのは約 96GB）、Windows on Arm、llama
 | 音声まで聞くモデル | Qwen3-Omni-30B-A3B | 据え置き。新しい Qwen3.5-Omni は非公開 |
 | 画像生成・編集 | Qwen-Image-2512／Edit-2511 | 据え置き。上回る商用可のモデルは見つからなかった |
 | 動画（音声付き） | LTX-2 → **LTX-2.5** | LTX-2.5 が 2026-08 に公開された。年商 1,000 万ドル未満は商用無料 |
+| 動画（日本語の台詞付き） | なし | **MiniMax H3 を候補に追加**（2026-11-01）。ほぼ専有するので他と同時には載らない |
 | 動画（無音） | Wan2.2-I2V-A14B | 据え置き（Apache-2.0）。Wan 2.5 以降は重み非公開 |
 | 読み上げ（声をまねる） | 未定 | **Qwen3-TTS-1.7B-Base**（Apache-2.0）に決定。次点 VoxCPM2 |
 | 書き起こし | なし | Qwen3-ASR-1.7B（Apache-2.0、llama.cpp 公式 GGUF）が候補。lao にはまだ機能がない |
@@ -58,7 +59,7 @@ RTX Spark（128GB、モデルに使うのは約 96GB）、Windows on Arm、llama
 | Kandinsky 6.0 Video（2026-10） | MIT［二］ | 音声・口の動き付き。ComfyUI は独自拡張 |
 | InfiniteTalk | Apache-2.0［確］ | 音声に合わせて話す人物（口パク） |
 | LongCat-Video-Avatar-1.5 | MIT［確］ | 二人の会話 |
-| MiniMax H3（2026-08） | 条件付き［確］ | 日本語の台詞付き音声。ただし EU・英国・韓国・**米国では使えない** |
+| MiniMax H3（2026-08、33B＋Qwen3-VL-32B） | 条件付きで商用可［確］ | **e4-minimax-h3 として候補に追加**。日本語の台詞と効果音付き、最長 15 秒、768p。日本での利用は可（EU・英国・韓国・米国は対象外）。年商 2,000 万ドル超は別途許可。商用の製品・サービスの画面に「MiniMax H3」と表示、出力を AI の学習に使わない、公開時は AI 生成と表示。公式は BF16 のみ（約 135GB）で FP8 に落として約 90GB。2K 化は非公開 |
 | HunyuanVideo-1.5 | 条件付き［確］ | EU・英国・韓国で使えない |
 
 除外：Wan 2.5〜3.0（重み非公開）。
@@ -76,6 +77,8 @@ RTX Spark（128GB、モデルに使うのは約 96GB）、Windows on Arm、llama
 声をまねるのは、自分の声か許可を得た声だけにする。
 
 ## 実機で確かめること
+
+- MiniMax H3：FP8 で読んだときの実メモリと、768p・15 秒の生成時間（公式例は GPU 4 枚。1 台では遅い可能性が高い）。日本語の台詞の聞き取りやすさを LTX-2.5 と比べる。
 
 - Qwen3.8-27B・Gemma 4 31B・Mistral Small 4 の GGUF と mmproj の配布元とファイル名。
 - Qwen3-TTS を Windows on Arm で動かす方法。flash-attn などの arm64 版がない可能性がある。

@@ -148,6 +148,7 @@ lao の側で行うことと、スクリプトで変えられないことは次�
 | e2 の Qwen-Image | [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main/split_files) | ある。`split_files/` に diffusion_models（bf16・fp8・nvfp4、2512 版）と text_encoders（qwen_2.5_vl_7b） |
 | e4-wan の Wan2.2-I2V-A14B | [Comfy-Org/Wan_2.2_ComfyUI_Repackaged](https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged) | ある。`split_files/diffusion_models/` に i2v の high_noise・low_noise（14B、fp8_scaled）など |
 | e4-ltx の LTX | [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) | 2026-08-11 に公開された（同意が必要なゲート付き、22B、NVFP4／int8 版あり）。年商 1,000 万ドル未満は商用無料。FP8 か NVFP4 のファイルに `files` を絞る |
+| e4-minimax-h3 の MiniMax H3 | [MiniMaxAI/MiniMax-H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) | ある（2026-08-02、BF16 のみ）。`FL2VA/`（文字・画像から動画）と `Ref2VA/`（参照から動画）。ComfyUI の公式手順と T2V／R2V のひな形あり。MiniMax H3 Community License（日本は可、EU・英国・韓国・米国は不可） |
 | 意味検索の Qwen3-Embedding-0.6B | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | ある。`Qwen3-Embedding-0.6B-f16.gguf` |
 | e1-lfm3-omni の LFM3-Omni | 未定 | 配布元を到着後に確かめる |
 | e2-qwen36 の Qwen3.6-35B-A3B | [unsloth/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) | ある（2026-10-31）。Q8_0 36.9GB、UD-Q4_K_XL 22.4GB、mmproj-BF16 0.9GB。Apache-2.0 |

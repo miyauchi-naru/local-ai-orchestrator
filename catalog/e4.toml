@@ -43,6 +43,49 @@ workflow = "workflows/e4-ltx-i2v.json"
 patterns = "patterns/e4-ltx"
 bindings = { prompt = "", negative = "", seed = "", image = "", seconds = "", fps = "", width = "", height = "" }   # TODO(P0)
 
+# 日本語の台詞付き（音声付き、2026-08 公開）。MiniMax H3 Community License：商用可（年商 2,000 万ドル超は別途許可）。
+# ただし EU・英国・韓国・米国では使えない（日本で使う前提）。出力の権利は利用者。公開時は AI 生成の表示が必要。
+# 商用の製品・サービスの画面に「MiniMax H3」と表示する義務（IV.2）、出力を別の AI の学習に使わない（V.3）。
+# 本体は 33B（密。うち AdaLN の約 13B は推論時に前計算できる）、文字の符号化に Qwen3-VL-32B を丸ごと使う。
+# 公開は 768p の Base のみ（2K への拡大 H3-Regenerate-2K は非公開）。公式の FP8 版は無い → ComfyUI で FP8 に落として読む。
+[[configurations]]
+id = "e4-minimax-h3"
+label = "日本語の台詞付き（MiniMax H3）"
+status = "candidate"
+chat_component = "chat"
+
+[configurations.components.chat]
+role = "chat"
+engine = "llama"
+model = "gemma-4-E4B-it"
+source = { hub = "huggingface", repo = "ggml-org/gemma-4-E4B-it-GGUF", files = ["*.gguf"], revision = "", sha256 = {} }   # TODO(P0)
+format = "gguf"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16", kv_cache = "f16" }
+license = "Gemma"
+size_gb = 16
+mem = { weights_gb = 15, overhead_gb = 3 }
+context = { max = 32768, default = 16384 }
+capabilities = ["text", "tool_calls", "image", "audio", "video_frames"]
+args = ["--jinja"]
+
+[configurations.components.videogen]
+role = "video_gen"
+engine = "comfyui"
+model = "MiniMax-H3-Base-FL2VA"
+source = { hub = "huggingface", repo = "MiniMaxAI/MiniMax-H3", files = [], revision = "", sha256 = {} }   # TODO(P0): FL2VA/ と文字符号化（Qwen3-VL-32B）・VAE のファイル名を確認。Comfy-Org の再梱包版があればそちら
+format = "safetensors"
+quantization = "none"               # 配布は BF16 のみ。読み込み時に FP8 へ落とす（本体 33GB＋Qwen3-VL-32B 33GB）
+precision = { publisher = "BF16", runtime = "FP8" }
+license = "MiniMax H3 Community License"
+size_gb = 135
+mem = { weights_gb = 70, overhead_gb = 20 }
+capabilities = ["video_generate", "image_to_video", "audio_track"]
+max_seconds = 15
+workflow = "workflows/e4-minimax-h3-i2v.json"
+patterns = "patterns/e4-minimax-h3"
+bindings = { prompt = "", negative = "", seed = "", image = "", seconds = "", width = "", height = "" }   # TODO(P0)
+
 # 無音。Apache-2.0
 [[configurations]]
 id = "e4-wan"
