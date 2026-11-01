@@ -32,7 +32,10 @@ chat = [
 ]
 image = ["e2.e2-standard.imagegen"]
 # 動画の課題に使う生成モデル。空にすると動画の課題は飛ばす（組み合わせが video の数だけ増える）
-video = ["e4.e4-ltx.videogen"]
+video = [
+  "e4.e4-ltx.videogen",
+  "e4.e4-minimax-h3.videogen",   # 日本語の台詞付き。載せると 90GB 近く使うので、会話モデルは小さいものとしか組めない
+]
 # 判定役。all ならカタログで画像を見られるモデル全部が一つずつ判定し、判定役ごとの品質の中央値で順位を付ける
 # （組み合わせ自身の会話モデルは、その組み合わせの判定から外す）。絞るなら "e1.e1-standard.perceiver,e1.e1-omni.omni" のように書く
 judge = "all"
