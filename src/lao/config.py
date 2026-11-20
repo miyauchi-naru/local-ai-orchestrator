@@ -64,6 +64,16 @@ class Configuration:
     def by_role(self, role: str) -> list[Component]:
         return [c for c in self.components.values() if c.role == role]
 
+    @property
+    def voices(self) -> dict[str, dict[str, Any]]:
+        """決まった声の一覧（voice_design の部品の voices）。名前 → 定義。"""
+        out: dict[str, dict[str, Any]] = {}
+        for c in self.components.values():
+            if "voice_design" in c.capabilities:
+                for v in c.raw.get("voices", []):
+                    out[v["id"]] = {**v, "component": c.key}
+        return out
+
 
 @dataclass
 class Environment:
@@ -114,6 +124,16 @@ def _component(key: str, d: dict[str, Any], where: str) -> Component:
         raise ConfigError(f"{where}.{key}: 不明な engine {d['engine']}")
     if d["quantization"] not in QUANTIZATION:
         raise ConfigError(f"{where}.{key}: 不明な quantization {d['quantization']}")
+    seen: set[str] = set()
+    for v in d.get("voices", []):
+        for k in ("id", "label", "gender", "description"):
+            if not v.get(k):
+                raise ConfigError(f"{where}.{key}.voices: '{k}' がありません")
+        if v["gender"] not in ("male", "female"):
+            raise ConfigError(f"{where}.{key}.voices.{v['id']}: gender は male か female です")
+        if v["id"] in seen:
+            raise ConfigError(f"{where}.{key}.voices: {v['id']} が重複しています")
+        seen.add(v["id"])
     return Component(
         key=key,
         role=d["role"],

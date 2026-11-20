@@ -237,7 +237,11 @@ class FakeComfyComponent:
 
 
 class FakeTTS:
+    def __init__(self):
+        self.calls: list[dict] = []
+
     async def synthesize(self, out: Path, **params) -> Path:
+        self.calls.append(params)
         _ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", str(out)])
         return out
 

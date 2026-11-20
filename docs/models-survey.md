@@ -16,6 +16,7 @@ RTX Spark（128GB、モデルに使うのは約 96GB）、Windows on Arm、llama
 | 動画（日本語の台詞付き） | なし | **MiniMax H3 を候補に追加**（2026-11-01）。ほぼ専有するので他と同時には載らない |
 | 動画（無音） | Wan2.2-I2V-A14B | 据え置き（Apache-2.0）。Wan 2.5 以降は重み非公開 |
 | 読み上げ（声をまねる） | 未定 | **Qwen3-TTS-1.7B-Base**（Apache-2.0）に決定。次点 VoxCPM2 |
+| 読み上げ（決まった声） | なし | **Qwen3-TTS-1.7B-VoiceDesign**（Apache-2.0）で日本語の男女 15 種ずつを説明文から作る（2026-11-20）。VOICEVOX などのキャラ声は規約がキャラごとに違うため入れない |
 | 書き起こし | なし | Qwen3-ASR-1.7B（Apache-2.0、llama.cpp 公式 GGUF）が候補。lao にはまだ機能がない |
 | 音楽・効果音 | なし | ACE-Step 1.5（MIT、出力の商用利用を明記）が候補。lao にはまだ機能がない |
 

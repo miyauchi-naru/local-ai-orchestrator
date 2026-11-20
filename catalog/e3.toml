@@ -39,3 +39,231 @@ license = "Apache-2.0"
 size_gb = 8
 mem = { weights_gb = 6, overhead_gb = 4 }
 capabilities = ["speech_generate", "voice_reference"]
+
+[configurations.components.voice_design]
+role = "tts"
+engine = "tts"
+# 2026-11-20 追加：説明文から声を作る（決まった声の一覧＝下の voices を作るためだけに使う）。Apache-2.0
+# 声はここで一度だけ作って成果物に保存し、以後は上の Base がその声をまねて読み上げる（同じ声で揃う）
+model = "Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+source = { hub = "huggingface", repo = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", files = [], revision = "", sha256 = {} }   # TODO(P0): Base と同じ中継で動くか確認
+format = "engine-specific"
+quantization = "none"
+precision = { publisher = "BF16", runtime = "BF16" }
+license = "Apache-2.0"
+size_gb = 5
+mem = { weights_gb = 4, overhead_gb = 2 }
+capabilities = ["voice_design"]
+
+# 決まった声の一覧（日本語・男女）。generate_speech の voice で名前を指定する。
+# description は VoiceDesign への声の説明（英語のほうが安定する）。seed と合わせて同じ声が作られる。
+# 実機で聞いて気に入らなければ description か seed を変える（変えると次の読み上げで作り直す）  # P0
+[[configurations.components.voice_design.voices]]
+id = "jp-male-boy"
+label = "男性・少年（元気）"
+gender = "male"
+description = "A Japanese boy around ten years old. Lively, high and clear voice, standard Japanese (Tokyo) pronunciation, cheerful and curious tone."
+seed = 1101
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-boy-shy"
+label = "男性・少年（控えめ）"
+gender = "male"
+description = "A Japanese boy around twelve years old. Soft, slightly hesitant, gentle high voice, standard Japanese (Tokyo) pronunciation, quiet and polite."
+seed = 1102
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-teen"
+label = "男性・高校生（さわやか）"
+gender = "male"
+description = "A Japanese teenage boy around seventeen. Fresh, clear, slightly youthful tenor voice, standard Japanese (Tokyo) pronunciation, friendly and natural."
+seed = 1103
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-young"
+label = "男性・青年（明るい）"
+gender = "male"
+description = "A Japanese man in his early twenties. Bright, friendly, clear tenor voice, standard Japanese (Tokyo) pronunciation, medium pace, energetic but not shouting."
+seed = 1104
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-hot"
+label = "男性・青年（熱血）"
+gender = "male"
+description = "A Japanese man in his twenties. Passionate, powerful, loud and determined voice like an anime hero, standard Japanese (Tokyo) pronunciation, fast and forceful delivery."
+seed = 1105
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-cool"
+label = "男性・青年（クール）"
+gender = "male"
+description = "A Japanese man in his twenties. Cool, composed, slightly low and smooth voice, standard Japanese (Tokyo) pronunciation, calm and a little distant."
+seed = 1106
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-timid"
+label = "男性・青年（気弱）"
+gender = "male"
+description = "A Japanese man in his twenties. Timid, nervous, soft and slightly shaky voice, standard Japanese (Tokyo) pronunciation, hesitant pace."
+seed = 1107
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-calm"
+label = "男性・大人（落ち着いた低め）"
+gender = "male"
+description = "A Japanese man in his thirties. Calm, warm, slightly low baritone voice, standard Japanese (Tokyo) pronunciation, steady pace, suited to narration and explanations."
+seed = 1108
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-narrator"
+label = "男性・ナレーター"
+gender = "male"
+description = "A professional Japanese male narrator in his forties. Rich, resonant, clear baritone voice, standard Japanese (Tokyo) pronunciation, measured and authoritative delivery like a documentary."
+seed = 1109
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-business"
+label = "男性・会社員（丁寧）"
+gender = "male"
+description = "A Japanese businessman in his thirties. Polite, clear, professional mid-range voice, standard Japanese (Tokyo) pronunciation, courteous keigo style."
+seed = 1110
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-mature"
+label = "男性・中年（渋い）"
+gender = "male"
+description = "A Japanese man in his fifties. Deep, slightly husky, dignified voice, standard Japanese (Tokyo) pronunciation, slow and confident delivery."
+seed = 1111
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-villain"
+label = "男性・悪役（低く威圧的）"
+gender = "male"
+description = "A Japanese man in his forties playing a villain. Very deep, cold, menacing and intimidating voice, standard Japanese (Tokyo) pronunciation, slow deliberate delivery."
+seed = 1112
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-elder"
+label = "男性・おじいさん"
+gender = "male"
+description = "An elderly Japanese man in his seventies. Gentle, slightly raspy, kind voice, standard Japanese (Tokyo) pronunciation, slow relaxed pace."
+seed = 1113
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-kansai"
+label = "男性・関西弁"
+gender = "male"
+description = "A Japanese man in his thirties from Osaka. Friendly, lively mid-range voice speaking with a natural Kansai dialect accent, upbeat and humorous."
+seed = 1114
+
+[[configurations.components.voice_design.voices]]
+id = "jp-male-whisper"
+label = "男性・ささやき"
+gender = "male"
+description = "A Japanese man in his twenties whispering softly and intimately. Breathy, gentle, very quiet voice, standard Japanese (Tokyo) pronunciation, slow pace."
+seed = 1115
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-girl"
+label = "女性・少女（元気）"
+gender = "female"
+description = "A Japanese girl around ten years old. Lively, high and sweet voice, standard Japanese (Tokyo) pronunciation, cheerful and energetic tone."
+seed = 1201
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-girl-shy"
+label = "女性・少女（控えめ）"
+gender = "female"
+description = "A Japanese girl around twelve years old. Soft, shy, gentle high voice, standard Japanese (Tokyo) pronunciation, quiet and polite."
+seed = 1202
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-teen"
+label = "女性・高校生（明るい）"
+gender = "female"
+description = "A Japanese teenage girl around seventeen. Bright, clear, youthful voice, standard Japanese (Tokyo) pronunciation, friendly and natural."
+seed = 1203
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-young"
+label = "女性・若い（明るい）"
+gender = "female"
+description = "A Japanese woman in her early twenties. Bright, friendly, clear voice, standard Japanese (Tokyo) pronunciation, medium pace, cheerful tone."
+seed = 1204
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-energetic"
+label = "女性・若い（元気いっぱい）"
+gender = "female"
+description = "A Japanese woman in her twenties. Very energetic, high-spirited, loud and cheerful voice like an anime heroine, standard Japanese (Tokyo) pronunciation, fast delivery."
+seed = 1205
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-cool"
+label = "女性・若い（クール）"
+gender = "female"
+description = "A Japanese woman in her twenties. Cool, composed, slightly low and smooth voice, standard Japanese (Tokyo) pronunciation, calm and a little distant."
+seed = 1206
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-timid"
+label = "女性・若い（気弱）"
+gender = "female"
+description = "A Japanese woman in her twenties. Timid, nervous, soft and slightly shaky voice, standard Japanese (Tokyo) pronunciation, hesitant pace."
+seed = 1207
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-calm"
+label = "女性・大人（落ち着いた）"
+gender = "female"
+description = "A Japanese woman in her thirties. Calm, soft, warm mid-range voice, standard Japanese (Tokyo) pronunciation, steady pace, suited to narration and explanations."
+seed = 1208
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-narrator"
+label = "女性・ナレーター"
+gender = "female"
+description = "A professional Japanese female narrator in her thirties. Clear, warm, articulate voice, standard Japanese (Tokyo) pronunciation, measured and polished delivery like a news anchor."
+seed = 1209
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-business"
+label = "女性・受付（丁寧）"
+gender = "female"
+description = "A Japanese woman in her twenties working at a reception desk. Polite, clear, gentle professional voice, standard Japanese (Tokyo) pronunciation, courteous keigo style."
+seed = 1210
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-mature"
+label = "女性・中年（凛とした）"
+gender = "female"
+description = "A Japanese woman in her fifties. Composed, dignified, slightly low voice, standard Japanese (Tokyo) pronunciation, clear and confident delivery."
+seed = 1211
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-villain"
+label = "女性・悪役（妖しい）"
+gender = "female"
+description = "A Japanese woman in her thirties playing a villain. Sultry, cold, mocking and menacing voice, standard Japanese (Tokyo) pronunciation, slow deliberate delivery."
+seed = 1212
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-elder"
+label = "女性・おばあさん"
+gender = "female"
+description = "An elderly Japanese woman in her seventies. Gentle, soft, slightly thin and kind voice, standard Japanese (Tokyo) pronunciation, slow relaxed pace."
+seed = 1213
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-kansai"
+label = "女性・関西弁"
+gender = "female"
+description = "A Japanese woman in her thirties from Osaka. Friendly, lively voice speaking with a natural Kansai dialect accent, upbeat and humorous."
+seed = 1214
+
+[[configurations.components.voice_design.voices]]
+id = "jp-female-whisper"
+label = "女性・ささやき"
+gender = "female"
+description = "A Japanese woman in her twenties whispering softly and intimately. Breathy, gentle, very quiet voice, standard Japanese (Tokyo) pronunciation, slow pace."
+seed = 1215

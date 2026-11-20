@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .config import Configuration
@@ -115,6 +115,8 @@ ALL_TOOLS = [
         "speech_generate",
         {
             "text": Param("string", "読み上げる文章", True, max_length=10000),
+            "voice": Param("string", "決まった声の名前（例：jp-male-calm＝落ち着いた男性、jp-female-young＝明るい若い女性）。"
+                                     "reference_ref があればそちらが優先", max_length=40),
             "reference_ref": Param("ref", "参考音声（id@版）。本人の同意がある声に限る", ref_kinds=["audio"]),
             "style": Param("string", "話し方の指定（例：落ち着いて、明るく）", max_length=500),
             "speed": Param("number", "話す速さ（1.0 が標準）", minimum=0.5, maximum=2.0),
@@ -148,8 +150,22 @@ def tools_for(conf: Configuration) -> list[Tool]:
             if has_perceiver:
                 out.append(t)
         elif t.needs in caps:
-            out.append(t)
+            out.append(_with_voices(t, conf))
     return out
+
+
+def _with_voices(t: Tool, conf: Configuration) -> Tool:
+    """読み上げの voice に、この構成で選べる声の名前を並べる（構成に声の一覧がなければ voice を出さない）。"""
+    if "voice" not in t.params:
+        return t
+    params = dict(t.params)
+    voices = conf.voices
+    if not voices:
+        params.pop("voice")
+    else:
+        desc = "決まった声の名前（" + "、".join(f"{k}＝{v['label']}" for k, v in voices.items()) + "）。reference_ref があればそちらが優先"
+        params["voice"] = replace(t.params["voice"], description=desc, enum=list(voices))
+    return replace(t, params=params)
 
 
 def validate(name: str, raw_args: str | dict, conf: Configuration, library: Library) -> dict:
@@ -159,7 +175,7 @@ def validate(name: str, raw_args: str | dict, conf: Configuration, library: Libr
         raise ToolError(f"未登録のツール '{name}' は使えません")
     if name not in allowed:
         raise ToolError(f"ツール '{name}' はこの環境では使えません")
-    tool = TOOLS[name]
+    tool = next(t for t in tools_for(conf) if t.name == name)
     if isinstance(raw_args, str):
         try:
             args = json.loads(raw_args or "{}")

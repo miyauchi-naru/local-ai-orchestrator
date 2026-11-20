@@ -195,6 +195,9 @@ ARTIFACT_GUIDE = (
     "利用者が許可したときだけ動く）。"
 )
 
+# 決まった声の見本で読む文（声を作るときと、Base が声をまねるときの参考文。いろいろな音が入るようにしてある）
+VOICE_SAMPLE_TEXT = "こんにちは。今日はとてもいい天気ですね。少し歩いて、駅前に新しくできたお店へ行ってみませんか。"
+
 VOICE_GUIDE = ("いまは音声での会話です。利用者の発言は録音で届きます（聞き取れないときは聞き返してください）。"
                "返答はそのまま読み上げられるので、話し言葉で短く（多くても 3〜4 文）答え、"
                "表・コード・箇条書き・URL・記号は使わないでください。")
@@ -898,11 +901,15 @@ class Orchestrator:
 
     def _generate_speech(self, args: dict):
         async def run(ctx: JobContext) -> list[str]:
-            key = self._component_key("tts")
-            ref_path = None
+            key = self._component_key("tts", "speech_generate")
+            ref_path = ref_text = None
             sources = []
             if args.get("reference_ref"):
                 ref_art = self.library.get(args["reference_ref"])
+                ref_path = str(self.library.path(ref_art))
+                sources.append(ref_art.ref)
+            elif args.get("voice"):
+                ref_art, ref_text = await self._voice_reference(args["voice"], ctx)
                 ref_path = str(self.library.path(ref_art))
                 sources.append(ref_art.ref)
             seed = args.get("seed", random.randrange(2**32))
@@ -914,7 +921,7 @@ class Orchestrator:
                 ctx.check_cancel()
                 async with self.rt.use([key], f"tts:{key}") as (eng,):
                     p = await eng.tts.synthesize(tmp / f"part{i:04d}.wav", text=chunk, reference_audio=ref_path,
-                                             reference_text=None, style=args.get("style"),
+                                             reference_text=ref_text, style=args.get("style"),
                                              speed=args.get("speed", 1.0), seed=seed)
                 parts.append(p)
                 ctx.set_progress((i + 1) / len(chunks), f"{i + 1}/{len(chunks)} 区切り")
@@ -924,12 +931,38 @@ class Orchestrator:
             ctx.set_state("saving")
             art = self.library.add_file(out, env_id=self.rt.env.id, configuration=self.rt.conf.id,
                                         title=args["text"][:40], sources=sources,
-                                        generation={"tool": "generate_speech", "seed": seed,
+                                        generation={"tool": "generate_speech", "seed": seed, "voice": args.get("voice"),
                                                     "style": args.get("style"), "speed": args.get("speed", 1.0),
                                                     "model": self.rt.conf.components[key].model})
             shutil.rmtree(tmp, ignore_errors=True)
             return [art.ref]
         return run
+
+    async def _voice_reference(self, voice_id: str, ctx: JobContext):
+        """決まった声の見本を返す。まだなければ VoiceDesign で一度だけ作って成果物に保存する。
+
+        説明文・seed・モデルが同じ見本があれば使い回すので、同じ名前の声はいつも同じ声になる。
+        """
+        voices = self.rt.conf.voices
+        if voice_id not in voices:
+            raise ToolError(f"声 '{voice_id}' はこの構成にありません（{', '.join(voices) or 'なし'}）")
+        v = voices[voice_id]
+        comp = self.rt.conf.components[v["component"]]
+        text = v.get("sample_text") or VOICE_SAMPLE_TEXT
+        want = {"tool": "voice_design", "voice": voice_id, "description": v["description"],
+                "seed": v.get("seed"), "model": comp.model, "sample_text": text}
+        for a in self.library.list(kind="audio"):
+            if all(a.generation.get(k) == want[k] for k in want):
+                return a, text
+        ctx.set_state("processing", f"声「{v['label']}」を初めて作っています")
+        tmp = self._tmp()
+        async with self.rt.use([comp.key], f"tts:{comp.key}") as (eng,):
+            p = await eng.tts.synthesize(tmp / "voice.wav", text=text, reference_audio=None, reference_text=None,
+                                         voice_design=v["description"], style=None, speed=1.0, seed=v.get("seed"))
+        art = self.library.add_file(p, env_id=self.rt.env.id, configuration=self.rt.conf.id,
+                                    title=f"声：{v['label']}", generation=want)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return art, text
 
     def _generate_video(self, args: dict):
         async def run(ctx: JobContext) -> list[str]:

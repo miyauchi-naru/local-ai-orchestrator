@@ -156,6 +156,7 @@ lao の側で行うことと、スクリプトで変えられないことは次�
 | e2-gemma31 の gemma-4-31B-it | 公式 [google/gemma-4-31B-it](https://huggingface.co/google/gemma-4-31B-it) | GGUF（ggml-org か Google の QAT 版）と mmproj を確認 |
 | e1-mistral4 の Mistral-Small-4-119B-2603 | 公式 [mistralai/Mistral-Small-4-119B-2603](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603) | カードが unsloth の GGUF を案内。IQ4_XS（約 63GB）のファイル名を確認 |
 | e3 の Qwen3-TTS-12Hz-1.7B-Base | [Qwen/Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | ある（Apache-2.0）。Windows on Arm で qwen-tts が動くか確認 |
+| e3 の Qwen3-TTS-12Hz-1.7B-VoiceDesign | [Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) | ある（Apache-2.0）。日本語の決まった声 30 種を作るのに使う。Base と同じ中継で動かす |
 | e1-lfm25 の LFM2.5-24B-A2B | [LiquidAI/LFM2.5-24B-A2B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF) | ある（2026-10-31）。Q4_0（QAD 版 13.6GB）・Q4_K_M 14.5GB・Q8_0 25.5GB・BF16 48GB。文字のみ。ライセンスは lfm1.0 |
 
 ## 4 メイン PC から使う（最後につなぐ）
