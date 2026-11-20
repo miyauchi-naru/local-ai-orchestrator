@@ -122,7 +122,8 @@ TOOL_DEFS = [
          "prompt": {"type": "string", "description": "動きや場面の説明（英語推奨）"},
          "seconds": {"type": "number", "minimum": 1, "maximum": 20},
          "narration": {"type": "string", "description": "読み上げる文章（省略すると音声を重ねない）"},
-         "voice_ref": {"type": "string", "description": "読み上げの参考音声（id@版、本人の同意がある声に限る）"},
+         "voice": {"type": "string", "description": "読み上げの決まった声の名前（voices で一覧。例：jp-male-calm）"},
+         "voice_ref": {"type": "string", "description": "読み上げの参考音声（id@版、本人の同意がある声に限る）。voice より優先"},
          "mix": {"type": "boolean", "description": "true なら動画の元の音と混ぜる（既定は置き換え）"},
          "video_ref": {"type": "string", "description": "作り終えた動画（id@版）。指定すると動画の生成を飛ばす"},
          "wait_seconds": _WAIT},
@@ -133,6 +134,8 @@ TOOL_DEFS = [
          "mix": {"type": "boolean", "description": "true なら元の音と混ぜる"},
          "title": {"type": "string"}},
          "required": ["refs"], "additionalProperties": False}},
+    {"name": "voices", "description": "読み上げ（generate_speech・make_clip）の voice で選べる日本語の声の一覧（男女・年代・雰囲気）。",
+     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "styles", "description": "保存した画像のスタイル（名前・前置き・避けたい内容・縦横比）の一覧。",
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "save_style",
@@ -391,6 +394,8 @@ class Bridge:
         speech_args = {"text": args["narration"], "wait_seconds": MAX_WAIT}
         if args.get("voice_ref"):
             speech_args["reference_ref"] = args["voice_ref"]
+        elif args.get("voice"):
+            speech_args["voice"] = args["voice"]
         out = self.run("generate_speech", speech_args)
         voice = REF_IN_TEXT.findall(out)
         if not voice:
@@ -413,6 +418,13 @@ class Bridge:
             out.append(f"- {p['id']}：{p['does']}（要るもの：{p['needs']}。出力：{p['output']}）"
                        + (f" 値：{params}" if params else "") + (f" 使わない：{p['avoid']}" if p["avoid"] else ""))
         return "\n".join(out)
+
+    def t_voices(self, _args: dict) -> str:
+        items = self._req("GET", "/api/voices").json()["voices"]
+        if not items:
+            return "決まった声はありません（E3 のカタログに voices がありません）"
+        g = {"male": "男性", "female": "女性"}
+        return "\n".join(f"- {v['id']}：{v['label']}（{g.get(v['gender'], v['gender'])}）" for v in items)
 
     def t_styles(self, _args: dict) -> str:
         items = self._req("GET", "/api/image-styles").json()["styles"]

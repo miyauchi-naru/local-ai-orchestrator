@@ -42,7 +42,7 @@ STYLES = {
 }
 DEFAULT_SETTINGS = {"about_me": "", "style": "standard", "custom_styles": [], "max_tokens": 2048,
                     "memory_enabled": True, "memory_sensitive": False, "effort": "", "folders": [],
-                    "break_minutes": 90}
+                    "break_minutes": 90, "voice": ""}
 BUILTIN_COMMANDS = [
     Command("スキルを作る", "会話しながらスキル（SKILL.md）の下書きを作る",
             "これから一緒にスキル（手順書）を作ります。作りたいもの：$ARGUMENTS\n\n"
@@ -147,6 +147,10 @@ class Service:
                 v = int(v)
                 if v and not 15 <= v <= 600:
                     raise ValueError("休憩の声かけは 15〜600 分か、0（しない）です")
+            if k == "voice":
+                v = str(v or "")
+                if v and v not in {x["id"] for x in self.voices()}:
+                    raise ValueError(f"声 {v} はカタログにありません")
             if k == "about_me":
                 v = str(v)[:4000]
             if k == "folders":
@@ -159,6 +163,18 @@ class Service:
             d[k] = v
         self.settings_path.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
         return d
+
+    def voices(self) -> list[dict]:
+        """読み上げで選べる決まった声（いまの構成にあればそれ、なければ E3 のカタログから）。"""
+        confs = []
+        if self.runtime and self.runtime.conf.voices:
+            confs.append(self.runtime.conf)
+        confs += [c for e in self.catalog.values() for c in e.configurations.values()]
+        for c in confs:
+            if c.voices:
+                return [{"id": v["id"], "label": v["label"], "gender": v["gender"], "configuration": c.id}
+                        for v in c.voices.values()]
+        return []
 
     def _embedder(self, log_dir: Path):
         """意味検索のモデル。[embedding] enabled のときだけ。最初に使うときに起動する。"""

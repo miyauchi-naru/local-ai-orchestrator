@@ -16,9 +16,19 @@ POST /tts      → 200、本文は audio/wav
 | `text` | 文字列 | 読み上げる文章（本ツールが `tts_chunk_chars` 以下に区切って送る） |
 | `reference_audio` | 文字列または null | 参考音声のファイルパス（本ツールの成果物フォルダ内） |
 | `reference_text` | 文字列または null | 参考音声で話している内容（分かる場合） |
+| `voice_design` | 文字列または null | 声の説明（英語）。指定されたら VoiceDesign のモデルでその声を作って読む。参考音声とは同時に来ない |
 | `style` | 文字列または null | 話し方の指定 |
 | `speed` | 数値 | 1.0 が標準 |
 | `seed` | 整数または null | 乱数シード |
+
+## 決まった声（voices）
+
+`catalog/e3.toml` の `voice_design` 部品に、日本語の決まった声（男女 15 種ずつ）を `voices` として並べています。`generate_speech` の `voice` で名前を指定すると、本ツールは次のように動きます。
+
+1. その声の見本がまだなければ、`voice_design`（説明文）と `seed` を付けて見本の文を一度だけ読ませ、成果物「声：○○」として保存する。
+2. 以後は、その見本を `reference_audio`、見本の文を `reference_text` として Base に送り、同じ声で読ませる。
+
+説明文か seed を変えると、次に使ったときに見本を作り直します。中継は、`voice_design` が来たら VoiceDesign のモデル、来なければ Base のモデルを使ってください（同時に載せなくてよい）。
 
 ## 守ること
 

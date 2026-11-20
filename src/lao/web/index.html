@@ -355,7 +355,7 @@ dl.meta dd { margin: 0; word-break: break-word; }
 const $ = (id) => document.getElementById(id);
 const ENV_DESC = {
   e1: "画像・音声・動画を読み、相談や推論をする", e2: "参考画像を見ながら画像を作り、直す",
-  e3: "参考音声の話し方で文章を読み上げる", e4: "画像を元に短い動画を作る",
+  e3: "日本語の男女30種の声か、参考音声の話し方で文章を読み上げる", e4: "画像を元に短い動画を作る",
 };
 const STYLE_LABEL = { standard: "標準", concise: "簡潔", explanatory: "説明的", learning: "学習", formal: "丁寧" };
 const KIND = { image: "画像", audio: "音声", video: "動画", text: "文書" };
@@ -1512,7 +1512,9 @@ async function renderSettings() {
   showView("settings");
   await loadSettings();
   const s = state.settings; const mem = await getJSON("/api/memory");
-  const [ist, hl] = await Promise.all([getJSON("/api/image-styles").catch(() => ({ styles: [], aspects: [] })), getJSON("/api/health").catch(() => null)]);
+  const [ist, hl, vo] = await Promise.all([getJSON("/api/image-styles").catch(() => ({ styles: [], aspects: [] })), getJSON("/api/health").catch(() => null),
+    getJSON("/api/voices").catch(() => ({ voices: [] }))]);
+  const voiceOpts = (g, label) => { const vs = vo.voices.filter((v) => v.gender === g); return vs.length ? `<optgroup label="${label}">${vs.map((v) => `<option value="${esc(v.id)}" ${s.voice === v.id ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</optgroup>` : ""; };
   const theme = store("lao-theme") || "system", fs = store("lao-fs") || "15";
   $("page").innerHTML = `<h1>設定</h1>
     <h2>あなたについて</h2><p class="small muted">すべての会話に効きます（仕事、呼び方、答え方の好みなど）。</p>
@@ -1535,6 +1537,8 @@ async function renderSettings() {
     <div class="actions" style="margin-top:8px"><button class="btn" id="stAddFolder">フォルダを許可（パスを入力）</button></div>
     <h2>休憩の声かけ</h2><p class="small muted">続けて使っているとき、区切りのよいところで休憩をすすめます（15 分あくと、続けての使用は数え直します）。</p>
     <select class="field" id="stBreak" style="max-width:200px">${[[0, "しない"], [45, "45 分ごと"], [60, "60 分ごと"], [90, "90 分ごと"], [120, "120 分ごと"]].map(([k, l]) => `<option value="${k}" ${+s.break_minutes === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <h2>読み上げの声</h2><p class="small muted">「読み上げ」と音声会話で使う声です（E3）。初めて使う声は一度だけ作るので、最初の読み上げは少し待ちます。</p>
+    <select class="field" id="stVoice" style="max-width:280px"><option value="">指定しない（モデルにまかせる）</option>${voiceOpts("male", "男性")}${voiceOpts("female", "女性")}</select>
     <h2>画像のスタイル</h2><p class="small muted">絵柄の前置き・避けたい内容・縦横比を名前で保存し、「スタイル○○で」と頼むと使います（メイン PC の Claude Code からも同じものを使えます）。</p>
     <div class="list">${ist.styles.map((x) => `<div class="item"><div class="main"><b>${esc(x.name)}</b><span class="d">${esc(x.prompt.slice(0, 120))}${x.aspect ? "・" + esc(x.aspect) : ""}${x.note ? "・" + esc(x.note) : ""}</span></div><button class="btn danger" data-imgstyle="${esc(x.name)}">削除</button></div>`).join("") || '<p class="muted">まだありません</p>'}</div>
     <div class="actions" style="margin-top:8px"><button class="btn" id="stAddImgStyle">スタイルを追加</button></div>
@@ -1556,7 +1560,7 @@ async function renderSettings() {
   $("stSave").onclick = async () => {
     const ok = await saveSettings({ about_me: $("stAbout").value, style: styleSel.value, max_tokens: parseInt($("stMax").value, 10) || 2048,
       effort: $("stEffort").value, memory_enabled: $("stMem").checked, memory_sensitive: $("stSens").checked,
-      break_minutes: parseInt($("stBreak").value, 10) || 0 });
+      break_minutes: parseInt($("stBreak").value, 10) || 0, voice: $("stVoice").value });
     if (ok) { toast("保存しました"); loadSettings(); }
   };
   $("stAddStyle").onclick = async () => {

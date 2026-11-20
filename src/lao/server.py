@@ -609,14 +609,23 @@ def create_app(service: Service, api_key: str | None = None) -> FastAPI:
         return {"deleted": name}
 
     # ------------------------------------------------------------ 読み上げ（E3）
+    @app.get("/api/voices", dependencies=[Depends(auth)])
+    def voices():
+        return {"voices": service.voices()}
+
     @app.post("/api/speak", dependencies=[Depends(auth)])
     async def speak(body: dict):
         from .tools import ToolError, tools_for, validate
         orch = runtime_or_409()
         rt = service.runtime
         text = str(body.get("text", ""))[:10000]
+        raw = {"text": text}
+        # 声は頼まれた声、なければ設定の「読み上げの声」。この構成にない声は使わない（構成の既定の声で読む）
+        voice = body.get("voice") or service.settings().get("voice")
+        if voice and voice in rt.conf.voices:
+            raw["voice"] = voice
         try:
-            args = validate("generate_speech", {"text": text}, rt.conf, service.library)
+            args = validate("generate_speech", raw, rt.conf, service.library)
         except ToolError as e:
             raise HTTPException(400, f"この環境では読み上げできません：{e}") from e
         job = service.jobs.submit("generate_speech", rt.env.id, rt.conf.id, args, orch._runner("generate_speech", args))
